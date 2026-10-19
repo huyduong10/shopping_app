@@ -575,7 +575,13 @@ export const PurchaseDetailPage: React.FC = () => {
       }))
     );
     setResubmitReason(proposal.necessityReason || '');
-    setResubmitAttachments(proposal.necessityAttachments || []);
+    setResubmitAttachments(
+      (proposal.necessityAttachments || []).map((a) => ({
+        ...a,
+        size: a.size ?? 0,
+        type: a.type ?? '',
+      }))
+    );
     setIsResubmitOpen(true);
   };
 

@@ -24,6 +24,9 @@ connectDB().then(async () => {
 
 const app = express();
 
+// Tin cậy reverse proxy (Render, Heroku...) để req.protocol trả về đúng 'https'
+app.set('trust proxy', 1);
+
 // Các Middleware cơ bản
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));

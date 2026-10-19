@@ -68,7 +68,7 @@ export interface Disbursement {
 }
 
 export interface ProcurementExecution {
-  actionType: 'advance' | 'invoice' | 'contract' | null;
+  actionType: 'advance' | 'invoice' | 'contract' | 'multiple' | null;
   invoiceInfo?: {
     invoiceNumber?: string;
     invoiceDate?: string | null;

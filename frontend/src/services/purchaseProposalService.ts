@@ -63,7 +63,7 @@ export const purchaseProposalService = {
   submitProcurementExecution: async (
     id: string,
     executionData: {
-      actionType: 'advance' | 'invoice' | 'contract';
+      actionType: 'advance' | 'invoice' | 'contract' | 'multiple';
       invoiceInfo?: any;
       contractInfo?: any;
       advanceProposalId?: string | null;
