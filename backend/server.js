@@ -28,9 +28,15 @@ const app = express();
 app.set('trust proxy', 1);
 
 // Các Middleware cơ bản
-const allowedOrigins = process.env.FRONTEND_URL
-  ? [process.env.FRONTEND_URL, 'http://localhost:3000']
-  : ['http://localhost:3000'];
+// FRONTEND_URL có thể chứa nhiều domain, phân tách bằng dấu phẩy (bỏ dấu '/' ở cuối)
+const allowedOrigins = [
+  ...(process.env.FRONTEND_URL || '')
+    .split(',')
+    .map((url) => url.trim().replace(/\/+$/, ''))
+    .filter(Boolean),
+  'http://localhost:3000',
+  'http://localhost:4000',
+];
 
 app.use(cors({
   origin: allowedOrigins,
