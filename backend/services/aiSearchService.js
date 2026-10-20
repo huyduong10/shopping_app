@@ -102,13 +102,13 @@ async function generateWithFallback(prompt, config = {}) {
     throw new Error('Chưa cấu hình GEMINI_API_KEY trong file .env');
   }
 
-  // Danh sách các model ưu tiên thử lần lượt
+  // Danh sách các model ưu tiên thử lần lượt (sử dụng model chính thức của Google Gemini API)
   const configuredModel = process.env.GEMINI_MODEL;
   const candidateModels = [
     configuredModel,
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
-    'gemini-3.6-flash',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
   ].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
 
   let lastError = null;

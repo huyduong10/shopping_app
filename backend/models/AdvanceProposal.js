@@ -72,7 +72,11 @@ const advanceProposalSchema = new mongoose.Schema({
       'pending_settlement',     // Chờ hoàn tạm ứng
       'settlement_submitted',   // Đã nộp hoàn tạm ứng
       'completed',              // Hoàn thành
-      'rejected',               // Từ chối
+      'rejected',               // Từ chối chung
+      'rejected_by_director',   // Giám đốc từ chối -> trả về người tạo làm lại
+      'rejected_by_chairman',   // Chủ tịch từ chối -> trả về người tạo làm lại
+      'rejected_by_accounting', // Kế toán từ chối -> trả về người tạo làm lại
+      'rejected_settlement',    // Kế toán từ chối hoàn tạm ứng -> trả về người tạo nộp lại
     ],
     default: 'draft',
   },

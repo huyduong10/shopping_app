@@ -118,7 +118,7 @@ class PurchaseProposalService {
       // [LUỒNG CŨ] query.$or = [{ currentApprovalRole: 'thu_mua' }, { 'approvalFlow.role': 'thu_mua', 'approvalFlow.status': { $in: ['approved', 'pending'] } }];
       query.$or = [
         { currentApprovalRole: 'thu_mua' },
-        { status: { $in: ['procurement_pricing', 'procurement_execution', 'procurement_review'] } },
+        { status: { $in: ['procurement_pricing', 'procurement_execution', 'procurement_review', 'rejected_by_director', 'rejected_by_accounting'] } },
         { 'approvalFlow.role': 'thu_mua', 'approvalFlow.status': { $in: ['approved', 'pending'] } },
       ];
     } else if (userRole === 'ke_toan') {
@@ -126,7 +126,7 @@ class PurchaseProposalService {
       // [LUỒNG CŨ] query.$or = [{ currentApprovalRole: 'ke_toan' }, { status: { $in: ['pending_payment', 'pending_payment_approval', 'disbursing', 'completed'] } }, { 'approvalFlow.role': 'ke_toan', 'approvalFlow.status': { $in: ['approved', 'pending'] } }];
       query.$or = [
         { currentApprovalRole: 'ke_toan' },
-        { status: { $in: ['pending_director_approval', 'pending_chairman_approval', 'pending_accounting', 'accounting_review', 'pending_payment', 'pending_payment_approval', 'disbursing', 'completed'] } },
+        { status: { $in: ['pending_director_approval', 'pending_chairman_approval', 'pending_accounting', 'accounting_review', 'pending_payment', 'pending_payment_approval', 'disbursing', 'completed', 'rejected_by_accounting'] } },
         { 'approvalFlow.role': 'ke_toan', 'approvalFlow.status': { $in: ['approved', 'pending'] } },
       ];
     } else if (userRole === 'giam_doc') {
@@ -142,6 +142,7 @@ class PurchaseProposalService {
       .populate('department', 'name')
       .populate('approvalFlow.approver', 'fullName role')
       .populate('disbursements.processedBy', 'fullName')
+      .populate('procurementExecution.submittedBy', 'fullName email role department bankAccount')
       .sort({ createdAt: -1 });
   }
 
@@ -151,7 +152,7 @@ class PurchaseProposalService {
       .populate('department', 'name')
       .populate('approvalFlow.approver', 'fullName role')
       .populate('disbursements.processedBy', 'fullName')
-      .populate('procurementExecution.submittedBy', 'fullName role')
+      .populate('procurementExecution.submittedBy', 'fullName email role department bankAccount')
       .populate({
         path: 'procurementExecution.advanceProposalId',
         select: 'proposalCode status totalAmount currentApprovalRole approvalFlow',
@@ -300,7 +301,7 @@ class PurchaseProposalService {
         procurementStep.approver = null;
       }
 
-      proposal.status = 'procurement_pricing';
+      proposal.status = 'rejected_by_director';
       proposal.currentApprovalRole = 'thu_mua';
       proposal.rejectionReason = reason || (isOverTenMillion ? 'Chủ tịch yêu cầu khảo sát lại nhà cung cấp hoặc đàm phán mức giá tốt hơn.' : 'Giám đốc yêu cầu khảo sát lại nhà cung cấp hoặc đàm phán mức giá tốt hơn.');
     } else if (proposal.status === 'pending_accounting' || proposal.status === 'accounting_review') {
@@ -320,7 +321,7 @@ class PurchaseProposalService {
         executionStep.approver = null;
       }
 
-      proposal.status = 'procurement_execution';
+      proposal.status = 'rejected_by_accounting';
       proposal.currentApprovalRole = 'thu_mua';
       proposal.rejectionReason = reason || 'Kế toán yêu cầu kiểm tra lại chứng từ hóa đơn/hợp đồng.';
     } else if (proposal.status === 'procurement_pricing') {
@@ -491,8 +492,8 @@ class PurchaseProposalService {
     const proposal = await PurchaseProposal.findById(proposalId);
     if (!proposal) throw new Error('Đề xuất không tồn tại');
 
-    // [LUỒNG MỚI] Chấp nhận khi ở procurement_pricing (hoặc procurement_review của luồng cũ)
-    if (proposal.status !== 'procurement_pricing' && proposal.status !== 'procurement_review') {
+    // [LUỒNG MỚI] Chấp nhận khi ở procurement_pricing (hoặc procurement_review của luồng cũ) hoặc bị từ chối báo giá nộp lại
+    if (proposal.status !== 'procurement_pricing' && proposal.status !== 'procurement_review' && proposal.status !== 'rejected_by_director') {
       throw new Error('Đề xuất không ở trạng thái thu mua lập báo giá');
     }
 
@@ -701,69 +702,33 @@ class PurchaseProposalService {
     const proposal = await PurchaseProposal.findById(proposalId);
     if (!proposal) throw new Error('Đề xuất không tồn tại');
 
-    if (proposal.status !== 'procurement_execution') {
+    if (proposal.status !== 'procurement_execution' && proposal.status !== 'rejected_by_accounting') {
       throw new Error('Đề xuất không ở trạng thái Thu mua thực hiện mua sắm');
     }
 
-    const { actionType, invoiceInfo, contractInfo, advanceProposalId } = executionData;
+    const { actionType, invoiceInfo, contractInfo, isAdvanced, advanceAmount, advanceNote, advanceProposalId } = executionData;
     const hasInvoice = Boolean(invoiceInfo && (invoiceInfo.invoiceNumber || (invoiceInfo.files && invoiceInfo.files.length > 0)));
     const hasContract = Boolean(contractInfo && (contractInfo.contractNumber || (contractInfo.files && contractInfo.files.length > 0)));
-    const hasAdvance = Boolean(actionType === 'advance' || advanceProposalId);
 
     let effectiveActionType = actionType || 'invoice';
-    const activeCount = [hasInvoice, hasContract, hasAdvance].filter(Boolean).length;
-    if (activeCount > 1) {
+    if (hasContract && hasInvoice) {
       effectiveActionType = 'multiple';
     } else if (hasContract) {
       effectiveActionType = 'contract';
     } else if (hasInvoice) {
       effectiveActionType = 'invoice';
-    } else if (hasAdvance) {
-      effectiveActionType = 'advance';
     }
 
-    let linkedAdvanceId = advanceProposalId || null;
-
-    // [LUỒNG MỚI] Nếu Thu mua có chọn "Tạm ứng" để mua vật tư:
-    // Đơn tạm ứng sẽ đi theo đúng luồng tạm ứng chuẩn:
-    // Giám đốc duyệt ➔ Chủ tịch duyệt ➔ Kế toán duyệt & giải ngân ➔ Hoàn tạm ứng ➔ Kế toán xác nhận
-    if (hasAdvance && !linkedAdvanceId) {
-      const procurer = await User.findById(procurerId).populate('department');
-      const advanceAmount = proposal.totalActualAmount || proposal.totalEstimatedAmount;
-
-      const advanceFlow = [
-        { step: 'Giám đốc duyệt', role: 'giam_doc', status: 'pending' },
-        { step: 'Chủ tịch duyệt', role: 'chu_tich', status: 'pending' },
-        { step: 'Kế toán duyệt & giải ngân', role: 'ke_toan', status: 'pending' },
-        { step: 'Hoàn tạm ứng', role: 'creator', status: 'pending' },
-        { step: 'Kế toán xác nhận hoàn tạm ứng', role: 'ke_toan', status: 'pending' },
-      ];
-
-      const newAdvance = await AdvanceProposal.create({
-        creator: procurerId,
-        department: procurer.department?._id || proposal.department,
-        bankAccount: procurer.bankAccount || { accountNumber: 'Chờ cập nhật', bankName: 'Chờ cập nhật' },
-        items: [{
-          stt: 1,
-          mucDich: `Tạm ứng mua sắm vật tư theo đề xuất ${proposal.proposalCode}`,
-          soTien: advanceAmount,
-        }],
-        approvalFlow: advanceFlow,
-        currentApprovalRole: 'giam_doc',
-        status: 'pending_director',
-        purchaseProposal: proposal._id,
-      });
-
-      linkedAdvanceId = newAdvance._id;
-    }
-
-    // [LUỒNG MỚI] Lưu toàn bộ thông tin thực hiện:
-    // Gửi cả 3 bản (hợp đồng, hóa đơn VAT, tạm ứng) nếu thu mua nhập nhiều hơn 1 bản
+    // [QUY TRÌNH MỚI] Quá trình tạm ứng do Thu mua tự thực hiện độc lập như nhân viên bên phân hệ Tạm Ứng.
+    // Tại đây, Thu mua chỉ nộp hợp đồng/hóa đơn VAT kèm ảnh minh chứng và nút xác nhận đã được tạm ứng hay chưa.
     proposal.procurementExecution = {
       actionType: effectiveActionType,
       invoiceInfo: invoiceInfo || {},
       contractInfo: contractInfo || {},
-      advanceProposalId: linkedAdvanceId,
+      isAdvanced: Boolean(isAdvanced),
+      advanceAmount: Number(advanceAmount) || 0,
+      advanceNote: advanceNote || '',
+      advanceProposalId: advanceProposalId || null,
       submittedBy: procurerId,
       submittedAt: new Date(),
     };
@@ -776,13 +741,11 @@ class PurchaseProposalService {
       executionStep.status = 'approved';
       executionStep.approver = procurerId;
       executionStep.date = new Date();
-      const actionLabels = {
-        advance: 'Đã lập đề xuất tạm ứng tiền mua sắm vật tư',
-        invoice: 'Đã mua hàng và đính kèm ảnh/file hóa đơn VAT gửi Kế toán',
-        contract: 'Đã ký kết và đính kèm ảnh/file hợp đồng kinh tế gửi Kế toán',
-        multiple: 'Đã đính kèm đầy đủ hồ sơ gồm hợp đồng kinh tế, hóa đơn VAT và/hoặc đơn tạm ứng gửi Kế toán',
-      };
-      executionStep.comment = actionLabels[effectiveActionType] || 'Đã hoàn tất hồ sơ mua sắm gửi Kế toán';
+      let commentMsg = 'Đã cung cấp hồ sơ chứng từ hợp đồng/hóa đơn cho Kế toán';
+      if (isAdvanced) {
+        commentMsg += ` (Xác nhận đã nhận tạm ứng trước: ${Number(advanceAmount || 0).toLocaleString('vi-VN')} VNĐ)`;
+      }
+      executionStep.comment = commentMsg;
     }
 
     // Chuyển sang Bước 5: Kế toán thanh toán / tạm ứng
@@ -845,9 +808,11 @@ class PurchaseProposalService {
      * proposal.currentApprovalRole = finalApprovalStep ? finalApprovalStep.role : 'giam_doc';
      */
 
-    // [LUỒNG MỚI] Sau khi Kế toán xử lý hồ sơ thanh toán/tạm ứng, đề xuất hoàn tất
+    // [LUỒNG MỚI] Sau khi Kế toán xử lý hồ sơ thanh toán/tạm ứng, đề xuất hoàn tất và lưu hóa đơn
     proposal.status = 'completed';
     proposal.currentApprovalRole = null;
+    proposal.isInvoiceCompleted = true;
+    proposal.invoiceCompletedAt = new Date();
 
     await proposal.save();
     return await this.getById(proposalId);

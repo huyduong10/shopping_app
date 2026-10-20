@@ -293,13 +293,21 @@ export const CreateAdvancePage: React.FC = () => {
         >
           {/* Hướng dẫn quy trình */}
           <div className="card" style={{ padding: '1.25rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-              <HelpCircle size={18} color="var(--accent-cyan)" />
-              <h4 style={{ fontSize: '0.95rem', color: '#ffffff' }}>Quy Trình Duyệt & Hoàn Ứng</h4>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <HelpCircle size={18} color="var(--accent-cyan)" />
+                <h4 style={{ fontSize: '0.95rem', color: '#ffffff' }}>Quy Trình Phân Cấp Duyệt Tạm Ứng</h4>
+              </div>
+              {totalAmount > 0 && (
+                <span className={`badge ${totalAmount > 10000000 ? 'badge-purple' : 'badge-info'}`} style={{ fontSize: '0.75rem' }}>
+                  {totalAmount > 10000000 ? '👑 Cấp duyệt: Chủ tịch' : '👔 Cấp duyệt: Sếp (Giám đốc)'}
+                </span>
+              )}
             </div>
-            <div style={{ fontSize: '0.825rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-              Đề xuất tạm ứng sẽ được Giám đốc &rarr; Chủ tịch &rarr; Kế toán giải ngân.
-              Sau khi nhận tiền và chi tiêu xong, bạn sẽ nộp chứng từ hoàn tạm ứng (Thừa / Thiếu / Đủ) để kế toán tất toán.
+            <div style={{ fontSize: '0.825rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              • <strong>Số tiền ≤ 10.000.000 VNĐ:</strong> Sếp (Giám đốc) duyệt &rarr; Kế toán giải ngân chuyển khoản.<br />
+              • <strong>Số tiền &gt; 10.000.000 VNĐ:</strong> Chủ tịch trực tiếp duyệt chi &rarr; Kế toán giải ngân chuyển khoản.<br />
+              • Sau khi chi tiêu xong, bạn nộp chứng từ hoàn tạm ứng (Thừa / Thiếu / Đủ) để Kế toán tất toán.
             </div>
           </div>
 

@@ -6,8 +6,8 @@ const { protect, restrictTo } = require('../middlewares/auth');
 // Yêu cầu xác thực đăng nhập cho toàn bộ các endpoint
 router.use(protect);
 
-// 1. Tạo đề xuất thanh toán (Dành riêng cho Kế toán)
-router.post('/', restrictTo('ke_toan'), paymentProposalController.create);
+// 1. Tạo đề xuất thanh toán (Dành riêng cho Kế toán tiếp nhận từ Thu mua)
+router.post('/', restrictTo('ke_toan', 'admin'), paymentProposalController.create);
 
 // 2. Lấy danh sách & Chi tiết đề xuất thanh toán
 router.get('/', paymentProposalController.getAll);

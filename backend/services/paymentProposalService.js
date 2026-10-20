@@ -160,12 +160,26 @@ class PaymentProposalService {
       },
     ];
 
+    // [QUY TRÌNH MỚI] Khâu chi trả thanh toán sẽ trả về cho Thu mua (người thực hiện mua sắm/hợp đồng), KHÔNG phải nhân viên đề xuất
+    let finalBeneficiary = beneficiary;
+    if (!finalBeneficiary || !finalBeneficiary.name) {
+      const procurerId = purchaseProposal.procurementExecution?.submittedBy;
+      const procurer = procurerId ? await User.findById(procurerId) : await User.findOne({ role: 'thu_mua' });
+      const partnerName = finalContractInfo?.partnerName;
+      finalBeneficiary = {
+        name: procurer?.fullName || partnerName || 'Bộ phận Thu mua',
+        accountNumber: procurer?.bankAccount?.accountNumber || '',
+        bankName: procurer?.bankAccount?.bankName || '',
+        branch: procurer?.bankAccount?.branch || '',
+      };
+    }
+
     // 3. Khởi tạo bản ghi đề xuất thanh toán đầy đủ hồ sơ (báo giá, hợp đồng, hóa đơn, yêu cầu vật tư)
     const paymentProposal = new PaymentProposal({
       purchaseProposal: purchaseProposalId,
       creator: creatorId,
       department: creator.department || purchaseProposal.department,
-      beneficiary,
+      beneficiary: finalBeneficiary,
       paymentReason,
       paymentMethod,
       amount: paymentAmount,
@@ -216,6 +230,10 @@ class PaymentProposalService {
     } else if (user.role === 'truong_phong') {
       // Trưởng phòng xem đơn thanh toán của phòng ban mình
       filter.department = user.department;
+    } else if (user.role === 'thu_mua') {
+      // Thu mua không có nghiệp vụ thanh toán, chỉ theo dõi các đơn thanh toán liên quan đến đề xuất mua sắm do mình phụ trách
+      const myPurchases = await PurchaseProposal.find({ 'procurementExecution.submittedBy': user._id }).select('_id');
+      filter.purchaseProposal = { $in: myPurchases.map((p) => p._id) };
     }
     // Kế toán, Giám đốc, Chủ tịch có quyền xem toàn bộ đơn thanh toán
 
@@ -403,24 +421,21 @@ class PaymentProposalService {
       // Cập nhật tổng số tiền đã giải ngân
       purchaseProposal.totalDisbursed = (purchaseProposal.totalDisbursed || 0) + proposal.amount;
 
-      // Xác định trạng thái của đơn mua sắm: Nếu đã giải ngân đủ tổng giá thực tế -> Hoàn thành
-      const targetAmount = purchaseProposal.totalActualAmount || purchaseProposal.totalEstimatedAmount;
-      if (purchaseProposal.totalDisbursed >= targetAmount) {
-        purchaseProposal.status = 'completed';
-        purchaseProposal.currentApprovalRole = null;
+      // [QUY TRÌNH 2 MỚI] Kế toán thực hiện chi tiền thanh toán hợp đồng/hóa đơn cho Thu mua:
+      // Hoàn tất đơn mua sắm và lưu hóa đơn vào danh mục hóa đơn đã hoàn thành
+      purchaseProposal.status = 'completed';
+      purchaseProposal.currentApprovalRole = null;
+      purchaseProposal.isInvoiceCompleted = true;
+      purchaseProposal.invoiceCompletedAt = new Date();
 
-        const disbursementStep = purchaseProposal.approvalFlow.find(
-          (step) => (step.step === 'Giải ngân' || step.role === 'ke_toan') && step.status === 'pending'
-        );
-        if (disbursementStep) {
-          disbursementStep.status = 'approved';
-          disbursementStep.approver = accountantId;
-          disbursementStep.comment = `Đã giải ngân hoàn tất 100% (Đợt cuối: ${proposal.proposalCode})`;
-          disbursementStep.date = new Date();
-        }
-      } else {
-        purchaseProposal.status = 'disbursing';
-        purchaseProposal.currentApprovalRole = 'ke_toan';
+      const accountingStep = purchaseProposal.approvalFlow.find(
+        (step) => (step.step?.includes('thanh toán') || step.step?.includes('Kế toán') || step.role === 'ke_toan') && step.status === 'pending'
+      );
+      if (accountingStep) {
+        accountingStep.status = 'approved';
+        accountingStep.approver = accountantId;
+        accountingStep.comment = `Đã thanh toán hợp đồng/hóa đơn cho Thu mua theo đề xuất ${proposal.proposalCode} (UNC: ${transactionCode || '—'})`;
+        accountingStep.date = new Date();
       }
 
       await purchaseProposal.save();

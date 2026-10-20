@@ -33,14 +33,16 @@ export const ApprovalPage: React.FC = () => {
       ]);
 
       const myPurchases = purchases.filter((p) => {
+        // Nếu đơn đã hoàn thành hoặc hóa đơn đã hoàn thành thì không hiển thị trong hộp thư cần duyệt
+        if (p.status === 'completed' || p.isInvoiceCompleted) return false;
+
         const totalAmount = (p.totalActualAmount && p.totalActualAmount > 0)
           ? p.totalActualAmount
           : (p.totalEstimatedAmount || 0);
         const isOverTenMillion = totalAmount > 10000000;
         const isPendingLeaderApproval = ['pending_director_approval', 'pending_chairman_approval', 'pending_final_approval'].includes(p.status);
 
-        // [LUỒNG MỚI] Nếu đơn đang chờ duyệt mua:
-        // Đơn > 10 triệu: Chủ tịch duyệt, Giám đốc KHÔNG duyệt
+        // [QUY TRÌNH 1]: Thu mua nộp 3-4 báo giá trình Giám đốc/Chủ tịch duyệt mua
         if (isPendingLeaderApproval) {
           if (isOverTenMillion) {
             if (user?.role === 'chu_tich') return true;
@@ -50,17 +52,54 @@ export const ApprovalPage: React.FC = () => {
           }
         }
 
+        // [QUY TRÌNH 1]: Kế toán tiếp nhận hóa đơn / hợp đồng từ Thu mua để lập Đề xuất thanh toán
+        if (user?.role === 'ke_toan') {
+          return p.status === 'pending_accounting' || p.status === 'accounting_review';
+        }
+
+        // [QUY TRÌNH 2]: Khi đơn đã chuyển sang khâu lập đề xuất thanh toán hoặc giải ngân (pending_payment_approval, disbursing),
+        // khâu này đã được chuyển riêng vào danh mục Đề Xuất Thanh Toán (tab Thanh Toán), KHÔNG lặp lại ở tab Mua Sắm
+        if (['pending_payment_approval', 'disbursing'].includes(p.status)) {
+          return false;
+        }
+
         if (p.currentApprovalRole === user?.role) return true;
-        // [LUỒNG MỚI] Kế toán nhận bản sao theo dõi khi Thu mua nộp báo giá cho Giám đốc / Chủ tịch
-        if (user?.role === 'ke_toan' && isPendingLeaderApproval) return true;
         return false;
       });
 
-      const myAdvances = advances.filter(
-        (a) =>
-          a.currentApprovalRole === user?.role ||
-          (a.currentApprovalRole === 'creator' && a.creator?._id === user?._id)
-      );
+      const myAdvances = advances.filter((a) => {
+        const totalAmount =
+          a.totalAmount ||
+          (a.items ? a.items.reduce((s: number, i: any) => s + (Number(i.soTien) || 0), 0) : 0);
+        const isOverTenMillion = totalAmount > 10000000;
+
+        // [LUỒNG MỚI] Đơn tạm ứng <= 10 triệu do Sếp (Giám đốc) duyệt
+        if (user?.role === 'giam_doc') {
+          if (a.status === 'pending_director') {
+            return !isOverTenMillion;
+          }
+          return false;
+        }
+
+        // [LUỒNG MỚI] Đơn tạm ứng > 10 triệu do Chủ tịch duyệt
+        if (user?.role === 'chu_tich') {
+          if (a.status === 'pending_chairman') return true;
+          if (a.status === 'pending_director' && isOverTenMillion) return true;
+          return a.currentApprovalRole === 'chu_tich';
+        }
+
+        // Kế toán: giải ngân hoặc hoàn ứng
+        if (user?.role === 'ke_toan') {
+          return (
+            a.currentApprovalRole === 'ke_toan' ||
+            ['pending_accounting', 'accounting_approved', 'disbursing', 'settlement_submitted'].includes(a.status)
+          );
+        }
+
+        if (a.currentApprovalRole === user?.role) return true;
+        if (a.currentApprovalRole === 'creator' && a.creator?._id === user?._id) return true;
+        return false;
+      });
 
       const myPayments = payments.filter((pay) => {
         if (user?.role === 'giam_doc') return pay.status === 'pending_director';
@@ -281,11 +320,11 @@ export const ApprovalPage: React.FC = () => {
                           <td>
                             {pay.amount <= 10000000 ? (
                               <span className="badge badge-info" style={{ fontSize: '0.7rem' }}>
-                                ≤ 10tr (Giám đốc)
+                                ≤ 10tr (GĐ giải ngân)
                               </span>
                             ) : (
                               <span className="badge badge-purple" style={{ fontSize: '0.7rem' }}>
-                                &gt; 10tr (Chủ tịch)
+                                &gt; 10tr (Chủ tịch giải ngân)
                               </span>
                             )}
                           </td>
@@ -295,7 +334,7 @@ export const ApprovalPage: React.FC = () => {
                           <td style={{ textAlign: 'right' }}>
                             <Link to={`/payment/${pay._id}`} className="btn btn-warning btn-sm">
                               <Eye size={14} />
-                              <span>{pay.status === 'pending_disbursement' ? 'Giải ngân' : 'Duyệt chi'}</span>
+                              <span>{pay.status === 'pending_disbursement' ? 'Duyệt chi' : 'Xác nhận giải ngân'}</span>
                             </Link>
                           </td>
                         </tr>
@@ -323,6 +362,7 @@ export const ApprovalPage: React.FC = () => {
                       <th>Người Nhận Tạm Ứng</th>
                       <th>Mục Đích</th>
                       <th>Số Tiền</th>
+                      <th>Cấp Phê Duyệt</th>
                       <th>Trạng Thái</th>
                       <th>Ngày Tạo</th>
                       <th style={{ textAlign: 'right' }}>Hành Động</th>
@@ -340,6 +380,17 @@ export const ApprovalPage: React.FC = () => {
                         <td style={{ fontSize: '0.85rem' }}>{a.items?.[0]?.mucDich || '—'}</td>
                         <td style={{ fontWeight: 700, color: 'var(--accent-cyan)' }} className="font-mono">
                           {formatCurrency(a.totalAmount)}
+                        </td>
+                        <td>
+                          {(a.totalAmount || 0) <= 10000000 ? (
+                            <span className="badge badge-info" style={{ fontSize: '0.7rem' }}>
+                              ≤ 10tr (Sếp/GĐ)
+                            </span>
+                          ) : (
+                            <span className="badge badge-purple" style={{ fontSize: '0.7rem' }}>
+                              &gt; 10tr (Chủ tịch)
+                            </span>
+                          )}
                         </td>
                         <td>
                           <StatusBadge status={a.status} type="advance" />

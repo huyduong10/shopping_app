@@ -30,10 +30,11 @@ export const AdvancePrintModal: React.FC<AdvancePrintModalProps> = ({
     .reverse()
     .find((step) => step.status === 'approved' && step.approver);
 
+  const isOverTenMillion = Number(proposal.totalAmount || 0) > 10000000;
   const approverName = (approvedStep?.approver as any)?.fullName || '';
   const approverRole = approvedStep?.role
     ? getRoleLabel(approvedStep.role)
-    : 'Ban Giám Đốc / Chủ Tịch';
+    : (isOverTenMillion ? 'Chủ Tịch Phê Duyệt' : 'Giám Đốc Phê Duyệt');
   const approverDate = approvedStep?.date
     ? formatDateToVietnameseLong(approvedStep.date)
     : 'Ngày ..... tháng ..... năm 20....';
@@ -343,7 +344,6 @@ export const AdvancePrintModal: React.FC<AdvancePrintModalProps> = ({
                   <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'right', fontSize: '11.5pt' }}>
                     {formatCurrency(proposal.totalAmount)}
                   </td>
-                  <td style={{ border: '1px solid #000', padding: '6px 8px' }}>—</td>
                 </tr>
               </tbody>
             </table>

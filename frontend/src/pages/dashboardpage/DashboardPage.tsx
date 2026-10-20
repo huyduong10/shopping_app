@@ -61,9 +61,17 @@ export const DashboardPage: React.FC = () => {
   const pendingMyPurchases = purchaseProposals.filter(
     (p) => p.currentApprovalRole === user?.role
   );
-  const pendingMyAdvances = advanceProposals.filter(
-    (a) => a.currentApprovalRole === user?.role
-  );
+  const pendingMyAdvances = advanceProposals.filter((a) => {
+    const totalAmount = a.totalAmount || 0;
+    const isOverTenMillion = totalAmount > 10000000;
+    if (user?.role === 'giam_doc') {
+      return a.currentApprovalRole === 'giam_doc' && !isOverTenMillion;
+    }
+    if (user?.role === 'chu_tich') {
+      return a.currentApprovalRole === 'chu_tich' || (a.currentApprovalRole === 'giam_doc' && isOverTenMillion);
+    }
+    return a.currentApprovalRole === user?.role;
+  });
   const totalPendingMyAction = pendingMyPurchases.length + pendingMyAdvances.length;
 
   if (loading) {

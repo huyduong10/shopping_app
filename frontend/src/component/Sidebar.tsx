@@ -36,7 +36,7 @@ export const Sidebar: React.FC = () => {
           },
         ]
       : []),
-    // Mục "Đề Xuất Thanh Toán" hiển thị cho Kế toán, Giám đốc, Chủ tịch
+    // Mục "Đề Xuất Thanh Toán" chỉ hiển thị cho Kế toán, Giám đốc, Chủ tịch (Thu mua không có nghiệp vụ thanh toán)
     ...(user && ['ke_toan', 'giam_doc', 'chu_tich', 'admin'].includes(user.role)
       ? [
           {

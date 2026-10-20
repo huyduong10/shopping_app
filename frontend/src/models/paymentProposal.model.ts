@@ -76,6 +76,7 @@ export interface PaymentProposal {
     note?: string;
     receiptAttachment?: any;
   };
+  transactionCode?: string;
   rejectionReason?: string;
   createdAt: string;
   updatedAt: string;

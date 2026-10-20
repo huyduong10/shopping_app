@@ -39,7 +39,11 @@ export type AdvanceProposalStatus =
   | 'pending_settlement'
   | 'settlement_submitted'
   | 'completed'
-  | 'rejected';
+  | 'rejected'
+  | 'rejected_by_director'
+  | 'rejected_by_chairman'
+  | 'rejected_by_accounting'
+  | 'rejected_settlement';
 
 export interface AdvanceProposal {
   _id: string;

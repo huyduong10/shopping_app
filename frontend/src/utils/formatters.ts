@@ -150,7 +150,11 @@ export const getPurchaseStatusInfo = (status: string): StatusMeta => {
     case 'pending_tp_approval':
       return { label: 'Chờ Trưởng phòng duyệt', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
     case 'rejected_by_tp':
-      return { label: 'TP từ chối (Chờ sửa lại)', badgeClass: 'badge-danger', dotColor: '#ef4444' };
+      return { label: 'Bị từ chối (TP yêu cầu sửa)', badgeClass: 'badge-danger', dotColor: '#ef4444' };
+    case 'rejected_by_director':
+      return { label: 'Bị từ chối (Khảo giá lại)', badgeClass: 'badge-danger', dotColor: '#ef4444' };
+    case 'rejected_by_accounting':
+      return { label: 'Bị từ chối (Kế toán yêu cầu sửa HĐ)', badgeClass: 'badge-danger', dotColor: '#ef4444' };
     case 'procurement_pricing':
       return { label: 'Thu mua lập báo giá', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
     case 'pending_director_approval':
@@ -160,7 +164,7 @@ export const getPurchaseStatusInfo = (status: string): StatusMeta => {
     case 'procurement_execution':
       return { label: 'Thu mua đang thực hiện', badgeClass: 'badge-info', dotColor: '#3b82f6' };
     case 'pending_accounting':
-      return { label: 'Chờ Kế toán xử lý', badgeClass: 'badge-purple', dotColor: '#a855f7' };
+      return { label: 'Chờ Kế toán lập đề xuất thanh toán', badgeClass: 'badge-purple', dotColor: '#a855f7' };
     // [LUỒNG CŨ]
     case 'pending_approval':
       return { label: 'Chờ duyệt sơ bộ', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
@@ -171,21 +175,21 @@ export const getPurchaseStatusInfo = (status: string): StatusMeta => {
     case 'procurement_completed':
       return { label: 'Thu mua đã điền giá', badgeClass: 'badge-info', dotColor: '#3b82f6' };
     case 'accounting_review':
-      return { label: 'Kế toán xác nhận giá', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
+      return { label: 'Kế toán tiếp nhận hồ sơ', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
     case 'pending_final_approval':
       return { label: 'Chờ duyệt giá chốt', badgeClass: 'badge-purple', dotColor: '#a855f7' };
     case 'pending_payment':
-      return { label: 'Chờ kế toán lập thanh toán', badgeClass: 'badge-purple', dotColor: '#a855f7' };
+      return { label: 'Chờ lập đề xuất thanh toán', badgeClass: 'badge-purple', dotColor: '#a855f7' };
     case 'pending_payment_approval':
-      return { label: 'Chờ duyệt thanh toán', badgeClass: 'badge-purple', dotColor: '#a855f7' };
+      return { label: 'Chờ Giám đốc duyệt chi', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
     case 'final_approved':
       return { label: 'Đã duyệt giá chốt', badgeClass: 'badge-primary', dotColor: '#6366f1' };
     case 'disbursing':
-      return { label: 'Đang giải ngân', badgeClass: 'badge-info', dotColor: '#06b6d4' };
+      return { label: 'Chờ Kế toán thanh toán tiền', badgeClass: 'badge-info', dotColor: '#06b6d4' };
     case 'completed':
-      return { label: 'Hoàn thành', badgeClass: 'badge-success', dotColor: '#10b981' };
+      return { label: 'Đã thanh toán (Hoàn thành)', badgeClass: 'badge-success', dotColor: '#10b981' };
     case 'rejected':
-      return { label: 'Từ chối', badgeClass: 'badge-danger', dotColor: '#ef4444' };
+      return { label: 'Bị từ chối', badgeClass: 'badge-danger', dotColor: '#ef4444' };
     default:
       return { label: status, badgeClass: 'badge-secondary', dotColor: '#94a3b8' };
   }
@@ -196,9 +200,9 @@ export const getAdvanceStatusInfo = (status: string): StatusMeta => {
     case 'draft':
       return { label: 'Bản nháp', badgeClass: 'badge-secondary', dotColor: '#94a3b8' };
     case 'pending_director':
-      return { label: 'Chờ Giám đốc duyệt', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
+      return { label: 'Chờ Sếp (GĐ) duyệt', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
     case 'pending_chairman':
-      return { label: 'Chờ Chủ tịch duyệt', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
+      return { label: 'Chờ Chủ tịch duyệt', badgeClass: 'badge-purple', dotColor: '#a855f7' };
     case 'pending_accounting':
       return { label: 'Chờ Kế toán duyệt', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
     case 'accounting_approved':
@@ -213,8 +217,16 @@ export const getAdvanceStatusInfo = (status: string): StatusMeta => {
       return { label: 'Đã nộp chứng từ hoàn', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
     case 'completed':
       return { label: 'Hoàn thành', badgeClass: 'badge-success', dotColor: '#10b981' };
+    case 'rejected_by_director':
+      return { label: 'Bị từ chối (GĐ yêu cầu sửa)', badgeClass: 'badge-danger', dotColor: '#ef4444' };
+    case 'rejected_by_chairman':
+      return { label: 'Bị từ chối (Chủ tịch yêu cầu sửa)', badgeClass: 'badge-danger', dotColor: '#ef4444' };
+    case 'rejected_by_accounting':
+      return { label: 'Bị từ chối (Kế toán yêu cầu sửa)', badgeClass: 'badge-danger', dotColor: '#ef4444' };
+    case 'rejected_settlement':
+      return { label: 'Bị từ chối (Kế toán yêu cầu làm lại hoàn ứng)', badgeClass: 'badge-danger', dotColor: '#ef4444' };
     case 'rejected':
-      return { label: 'Từ chối', badgeClass: 'badge-danger', dotColor: '#ef4444' };
+      return { label: 'Bị từ chối (Yêu cầu làm lại)', badgeClass: 'badge-danger', dotColor: '#ef4444' };
     default:
       return { label: status, badgeClass: 'badge-secondary', dotColor: '#94a3b8' };
   }
@@ -223,15 +235,15 @@ export const getAdvanceStatusInfo = (status: string): StatusMeta => {
 export const getPaymentStatusInfo = (status: string): StatusMeta => {
   switch (status) {
     case 'pending_director':
-      return { label: 'Chờ Giám đốc duyệt chi', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
+      return { label: 'Chờ Giám đốc xác nhận giải ngân', badgeClass: 'badge-warning', dotColor: '#f59e0b' };
     case 'pending_chairman':
-      return { label: 'Chờ Chủ tịch duyệt chi', badgeClass: 'badge-purple', dotColor: '#a855f7' };
+      return { label: 'Chờ Chủ tịch xác nhận giải ngân', badgeClass: 'badge-purple', dotColor: '#a855f7' };
     case 'pending_disbursement':
-      return { label: 'Chờ kế toán giải ngân', badgeClass: 'badge-info', dotColor: '#06b6d4' };
+      return { label: 'Chờ Kế toán duyệt chi', badgeClass: 'badge-info', dotColor: '#06b6d4' };
     case 'completed':
-      return { label: 'Đã thanh toán', badgeClass: 'badge-success', dotColor: '#10b981' };
+      return { label: 'Đã duyệt chi & hoàn thành', badgeClass: 'badge-success', dotColor: '#10b981' };
     case 'rejected':
-      return { label: 'Từ chối', badgeClass: 'badge-danger', dotColor: '#ef4444' };
+      return { label: 'Bị từ chối', badgeClass: 'badge-danger', dotColor: '#ef4444' };
     default:
       return { label: status, badgeClass: 'badge-secondary', dotColor: '#94a3b8' };
   }

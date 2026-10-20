@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { paymentProposalService } from '../../services';
 import { PaymentProposal } from '../../models';
-import { StatusBadge, PaymentPrintModal } from '../../component';
+import { StatusBadge, PaymentPrintModal, InvoiceDetailModal, Pagination } from '../../component';
 import { formatCurrency, formatDate, getRoleLabel } from '../../utils/formatters';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -28,10 +28,14 @@ export const PaymentListPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [printProposal, setPrintProposal] = useState<PaymentProposal | null>(null);
+  // [MỚI] Xem nhanh chi tiết hóa đơn khi bấm vào dòng
+  const [viewingPayment, setViewingPayment] = useState<PaymentProposal | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Cho phép Kế toán, Giám đốc, Chủ tịch truy cập danh sách đề xuất thanh toán
   useEffect(() => {
-    if (user && !['ke_toan', 'giam_doc', 'chu_tich'].includes(user.role)) {
+    if (user && !['ke_toan', 'giam_doc', 'chu_tich', 'admin'].includes(user.role)) {
       navigate('/dashboard', { replace: true });
     }
   }, [user, navigate]);
@@ -74,7 +78,7 @@ export const PaymentListPage: React.FC = () => {
 
   const totalAmount = proposals.reduce((sum, p) => sum + (p.amount || 0), 0);
 
-  if (!user || !['ke_toan', 'giam_doc', 'chu_tich'].includes(user.role)) {
+  if (!user || !['ke_toan', 'giam_doc', 'chu_tich', 'admin'].includes(user.role)) {
     return null;
   }
 
@@ -101,11 +105,11 @@ export const PaymentListPage: React.FC = () => {
             <h1>Đề Xuất Thanh Toán</h1>
           </div>
           <p style={{ fontSize: '0.875rem' }}>
-            Quản lý tất cả các đề xuất thanh toán — lập mới, theo dõi phê duyệt chi và giải ngân.
+            Kế toán tiếp nhận chứng từ từ Thu mua để lập đề xuất thanh toán trình Sếp xác nhận giải ngân và duyệt chi.
           </p>
         </div>
 
-        {user.role === 'ke_toan' && (
+        {['ke_toan', 'admin'].includes(user.role) && (
           <div className="page-header-actions">
             <Link to="/payment/create" className="btn btn-primary">
               <PlusCircle size={17} />
@@ -137,21 +141,21 @@ export const PaymentListPage: React.FC = () => {
         <div className="card" style={{ padding: '1rem 1.25rem' }}>
           <div style={{ fontSize: '0.75rem', color: 'var(--warning)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <Clock size={13} />
-            Chờ Lãnh Đạo Duyệt
+            Chờ Sếp Xác Nhận Giải Ngân
           </div>
           <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#fbbf24' }}>{pendingCount}</div>
         </div>
         <div className="card" style={{ padding: '1rem 1.25rem' }}>
           <div style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <DollarSign size={13} />
-            Chờ Giải Ngân
+            Chờ Kế Toán Duyệt Chi
           </div>
           <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#38bdf8' }}>{pendingDisbursement}</div>
         </div>
         <div className="card" style={{ padding: '1rem 1.25rem' }}>
           <div style={{ fontSize: '0.75rem', color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <CheckCircle2 size={13} />
-            Đã Thanh Toán
+            Đã Duyệt Chi & Hoàn Tất
           </div>
           <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#34d399' }}>{completedCount}</div>
         </div>
@@ -203,10 +207,10 @@ export const PaymentListPage: React.FC = () => {
             onChange={(e) => setStatusFilter(e.target.value)}
           >
             <option value="all">Tất cả trạng thái</option>
-            <option value="pending_director">Chờ Giám đốc duyệt chi</option>
-            <option value="pending_chairman">Chờ Chủ tịch duyệt chi</option>
-            <option value="pending_disbursement">Chờ kế toán giải ngân</option>
-            <option value="completed">Đã thanh toán</option>
+            <option value="pending_director">Chờ Giám đốc xác nhận giải ngân</option>
+            <option value="pending_chairman">Chờ Chủ tịch xác nhận giải ngân</option>
+            <option value="pending_disbursement">Chờ Kế toán duyệt chi</option>
+            <option value="completed">Đã duyệt chi & hoàn thành</option>
             <option value="rejected">Bị từ chối</option>
           </select>
         </div>
@@ -234,23 +238,26 @@ export const PaymentListPage: React.FC = () => {
           </Link>
         </div>
       ) : (
-        <div className="table-container">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Mã Đề Xuất TT</th>
-                <th>Đơn Mua Sắm Gốc</th>
-                <th>Người Tạo</th>
-                <th>Người Thụ Hưởng</th>
-                <th>Phương Thức</th>
-                <th>Số Tiền</th>
-                <th>Trạng Thái</th>
-                <th>Ngày Tạo</th>
-                <th style={{ textAlign: 'right' }}>Hành Động</th>
-              </tr>
-            </thead>
+        <div>
+          <div className="table-container" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            <table className="table" style={{ minWidth: '950px' }}>
+              <thead>
+                <tr>
+                  <th>Mã Đề Xuất TT</th>
+                  <th>Đơn Mua Sắm Gốc</th>
+                  <th>Người Tạo</th>
+                  <th>Người Thụ Hưởng</th>
+                  <th>Phương Thức</th>
+                  <th>Số Tiền</th>
+                  <th>Trạng Thái</th>
+                  <th>Ngày Tạo</th>
+                  <th style={{ textAlign: 'right' }}>Hành Động</th>
+                </tr>
+              </thead>
             <tbody>
-              {filteredProposals.map((p) => {
+              {filteredProposals
+                .slice((currentPage - 1) * pageSize, currentPage * pageSize)
+                .map((p) => {
                 const purchaseCode = typeof p.purchaseProposal === 'object'
                   ? p.purchaseProposal?.proposalCode
                   : '—';
@@ -259,20 +266,26 @@ export const PaymentListPage: React.FC = () => {
                   : p.purchaseProposal;
 
                 return (
-                  <tr key={p._id}>
+                  <tr
+                    key={p._id}
+                    onClick={() => setViewingPayment(p)}
+                    style={{ cursor: 'pointer', transition: 'background-color 0.15s ease' }}
+                    title="Bấm vào dòng này để xem chi tiết hóa đơn & in thông tin"
+                    className="table-row-clickable"
+                  >
                     <td>
-                      <Link
-                        to={`/payment/${p._id}`}
-                        style={{ fontWeight: 700, color: '#ffffff' }}
+                      <span
+                        style={{ fontWeight: 700, color: 'var(--accent-cyan)' }}
                         className="font-mono"
                       >
                         {p.proposalCode || `TT-${p._id.slice(-6).toUpperCase()}`}
-                      </Link>
+                      </span>
                     </td>
                     <td>
                       {purchaseId ? (
                         <Link
                           to={`/purchase/${purchaseId}`}
+                          onClick={(e) => e.stopPropagation()}
                           style={{ fontWeight: 600, color: 'var(--accent-cyan)', fontSize: '0.85rem' }}
                           className="font-mono"
                         >
@@ -299,7 +312,7 @@ export const PaymentListPage: React.FC = () => {
                         {p.paymentMethod === 'bank_transfer' ? 'Chuyển khoản' : 'Tiền mặt'}
                       </span>
                     </td>
-                    <td style={{ fontWeight: 700, color: '#ffffff' }} className="font-mono">
+                    <td style={{ fontWeight: 700, color: 'var(--accent-cyan)' }} className="font-mono">
                       {formatCurrency(p.amount)}
                     </td>
                     <td>
@@ -314,22 +327,29 @@ export const PaymentListPage: React.FC = () => {
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
                         <button
                           type="button"
-                          onClick={() => setPrintProposal(p)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPrintProposal(p);
+                          }}
                           className="btn btn-ghost btn-sm"
-                          style={{ padding: '0.4rem 0.65rem', color: 'var(--accent-cyan)' }}
+                          style={{ padding: '0.4rem 0.65rem', color: 'var(--accent-cyan)', gap: '0.25rem' }}
                           title="Xem trước và In biểu mẫu PDF"
                         >
                           <Printer size={14} />
                           <span>In PDF</span>
                         </button>
-                        <Link
-                          to={`/payment/${p._id}`}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewingPayment(p);
+                          }}
                           className="btn btn-secondary btn-sm"
-                          style={{ padding: '0.4rem 0.75rem' }}
+                          style={{ padding: '0.4rem 0.75rem', gap: '0.25rem' }}
                         >
                           <Eye size={14} />
                           <span>Chi tiết</span>
-                        </Link>
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -338,7 +358,29 @@ export const PaymentListPage: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {/* THANH PHÂN TRANG DANH SÁCH ĐỀ XUẤT THANH TOÁN */}
+        {filteredProposals.length > 5 && (
+          <Pagination
+            currentPage={currentPage}
+            totalItems={filteredProposals.length}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+            pageSizeOptions={[5, 10, 20, 50]}
+            itemName="hóa đơn / đề xuất"
+          />
+        )}
+      </div>
       )}
+
+      {/* MODAL XEM CHI TIẾT HÓA ĐƠN KHI BẤM VÀO DÒNG */}
+      <InvoiceDetailModal
+        isOpen={Boolean(viewingPayment)}
+        onClose={() => setViewingPayment(null)}
+        payment={viewingPayment}
+        onPrint={(pay) => setPrintProposal(pay)}
+      />
 
       {/* MODAL XEM TRƯỚC VÀ IN BIỂU MẪU ĐỀ NGHỊ THANH TOÁN */}
       <PaymentPrintModal

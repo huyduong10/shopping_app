@@ -4,22 +4,27 @@ const User = require('../models/User');
 class AdvanceProposalService {
 
   /**
-   * Thiết lập luồng phê duyệt dựa trên vai trò của người tạo:
-   * 
-   * Luồng nhân viên: giam_doc → chu_tich → ke_toan (duyệt & giải ngân) → hoàn tạm ứng → ke_toan xác nhận
-   * Luồng trưởng phòng: giam_doc → chu_tich → ke_toan (duyệt & giải ngân) → hoàn tạm ứng → ke_toan xác nhận
-   * Luồng giám đốc: (bỏ qua giam_doc) → chu_tich → ke_toan (duyệt & giải ngân) → hoàn tạm ứng → ke_toan xác nhận
-   * Luồng chủ tịch: (bỏ qua giam_doc & chu_tich) → ke_toan (duyệt & giải ngân) → hoàn tạm ứng → ke_toan xác nhận
+   * [LUỒNG MỚI] Thiết lập luồng phê duyệt đơn tạm ứng dựa trên hạn mức số tiền:
+   * - Đơn <= 10.000.000 VNĐ: Sếp (Giám đốc) duyệt -> Kế toán duyệt & giải ngân -> Hoàn tạm ứng -> Kế toán xác nhận
+   * - Đơn > 10.000.000 VNĐ: Chủ tịch duyệt (bỏ qua Giám đốc) -> Kế toán duyệt & giải ngân -> Hoàn tạm ứng -> Kế toán xác nhận
+   * - Giám đốc tự tạo: chuyển thẳng lên Chủ tịch duyệt
+   * - Chủ tịch tự tạo: chuyển thẳng sang Kế toán giải ngân
    */
-  buildApprovalFlow(creatorRole) {
+  buildApprovalFlow(creatorRole, totalAmount = 0) {
     const flow = [];
+    const isOverTenMillion = Number(totalAmount) > 10000000;
 
     if (creatorRole === 'nhan_vien' || creatorRole === 'truong_phong' || creatorRole === 'thu_mua' || creatorRole === 'ke_toan') {
-      flow.push({ step: 'Giám đốc duyệt', role: 'giam_doc', status: 'pending' });
-      flow.push({ step: 'Chủ tịch duyệt', role: 'chu_tich', status: 'pending' });
+      if (isOverTenMillion) {
+        // [LUỒNG MỚI] Đơn > 10 triệu: Chủ tịch trực tiếp duyệt tạm ứng, Giám đốc không duyệt
+        flow.push({ step: 'Chủ tịch duyệt tạm ứng', role: 'chu_tich', status: 'pending' });
+      } else {
+        // [LUỒNG MỚI] Đơn <= 10 triệu: Sếp (Giám đốc) duyệt tạm ứng
+        flow.push({ step: 'Giám đốc duyệt tạm ứng', role: 'giam_doc', status: 'pending' });
+      }
     } else if (creatorRole === 'giam_doc') {
       // Giám đốc: bỏ qua duyệt cấp giám đốc, chuyển thẳng lên chủ tịch
-      flow.push({ step: 'Chủ tịch duyệt', role: 'chu_tich', status: 'pending' });
+      flow.push({ step: 'Chủ tịch duyệt tạm ứng', role: 'chu_tich', status: 'pending' });
     }
     // Chủ tịch: bỏ qua cả giám đốc và chủ tịch, chuyển thẳng sang kế toán
 
@@ -49,7 +54,12 @@ class AdvanceProposalService {
     const creator = await User.findById(creatorId).populate('department');
     if (!creator) throw new Error('Người dùng không tồn tại');
 
-    const approvalFlow = this.buildApprovalFlow(creator.role);
+    // [LUỒNG MỚI] Tính tổng số tiền tạm ứng từ danh sách items để phân luồng thẩm quyền duyệt chi
+    const totalAmount = Array.isArray(data.items)
+      ? data.items.reduce((sum, item) => sum + (Number(item.soTien) || 0), 0)
+      : (Number(data.totalAmount) || 0);
+
+    const approvalFlow = this.buildApprovalFlow(creator.role, totalAmount);
     const currentApprovalRole = this.getCurrentApprovalRole(approvalFlow);
     const status = this.getStatusFromRole(currentApprovalRole);
 
@@ -62,6 +72,7 @@ class AdvanceProposalService {
       department: creator.department._id,
       bankAccount,
       items: data.items,
+      totalAmount,
       approvalFlow,
       currentApprovalRole,
       status,
@@ -86,8 +97,9 @@ class AdvanceProposalService {
     } else if (userRole === 'ke_toan') {
       query.$or = [
         { currentApprovalRole: 'ke_toan' },
-        { status: { $in: ['disbursing', 'disbursed', 'settlement_submitted', 'completed'] } },
-        { 'approvalFlow.role': 'ke_toan', 'approvalFlow.status': { $in: ['approved', 'pending'] } },
+        { status: { $in: ['disbursing', 'disbursed', 'settlement_submitted', 'completed', 'rejected_by_accounting', 'rejected_settlement'] } },
+        { 'approvalFlow.role': 'ke_toan' },
+        { creator: userId },
       ];
     }
     // Giám đốc và Chủ tịch có thể xem toàn bộ đề xuất
@@ -126,7 +138,18 @@ class AdvanceProposalService {
 
     const currentStep = proposal.approvalFlow[currentStepIndex];
 
-    if (currentStep.role !== approver.role) {
+    const isStepChairman = currentStep.role === 'chu_tich';
+    const isStepDirector = currentStep.role === 'giam_doc';
+
+    if (isStepChairman && approver.role !== 'chu_tich') {
+      throw new Error('Đơn tạm ứng trên 10.000.000 VNĐ thuộc thẩm quyền Chủ tịch phê duyệt');
+    }
+
+    if (isStepDirector && approver.role !== 'giam_doc' && approver.role !== 'chu_tich') {
+      throw new Error('Bạn không có quyền duyệt bước này');
+    }
+
+    if (!isStepChairman && !isStepDirector && currentStep.role !== approver.role) {
       throw new Error('Bạn không có quyền duyệt bước này');
     }
 
@@ -143,6 +166,8 @@ class AdvanceProposalService {
     if (nextPendingStep) {
       proposal.currentApprovalRole = nextPendingStep.role;
       proposal.status = this.getStatusFromRole(nextPendingStep.role);
+    } else {
+      proposal.currentApprovalRole = null;
     }
 
     await proposal.save();
@@ -153,18 +178,100 @@ class AdvanceProposalService {
     const proposal = await AdvanceProposal.findById(proposalId);
     if (!proposal) throw new Error('Đề xuất không tồn tại');
 
+    const approver = await User.findById(approverId);
+    if (!approver) throw new Error('Người duyệt không tồn tại');
+
     const currentStepIndex = proposal.approvalFlow.findIndex(step => step.status === 'pending');
     if (currentStepIndex === -1) throw new Error('Không có bước duyệt nào đang chờ');
 
     const currentStep = proposal.approvalFlow[currentStepIndex];
+
+    const isStepChairman = currentStep.role === 'chu_tich';
+    const isStepDirector = currentStep.role === 'giam_doc';
+
+    if (isStepChairman && approver.role !== 'chu_tich') {
+      throw new Error('Đơn tạm ứng trên 10.000.000 VNĐ thuộc thẩm quyền Chủ tịch xem xét');
+    }
+
+    if (isStepDirector && approver.role !== 'giam_doc' && approver.role !== 'chu_tich') {
+      throw new Error('Bạn không có quyền từ chối bước này');
+    }
+
+    if (!isStepChairman && !isStepDirector && currentStep.role !== approver.role) {
+      throw new Error('Bạn không có quyền từ chối bước này');
+    }
+
     currentStep.status = 'rejected';
     currentStep.approver = approverId;
     currentStep.comment = reason || '';
     currentStep.date = new Date();
 
-    proposal.status = 'rejected';
+    // [QUY TRÌNH MỚI] Nếu đơn tạm ứng bị từ chối, trả về bước trước đó (Người tạo) để làm lại
+    if (isStepChairman || approver.role === 'chu_tich') {
+      proposal.status = 'rejected_by_chairman';
+    } else if (isStepDirector || approver.role === 'giam_doc') {
+      proposal.status = 'rejected_by_director';
+    } else if (currentStep.role === 'ke_toan' || approver.role === 'ke_toan') {
+      proposal.status = 'rejected_by_accounting';
+    } else {
+      proposal.status = 'rejected';
+    }
+
     proposal.rejectionReason = reason || '';
-    proposal.currentApprovalRole = null;
+    proposal.currentApprovalRole = 'creator'; // Trả về bước trước đó: người tạo để làm lại
+
+    await proposal.save();
+    return await this.getById(proposalId);
+  }
+
+  /**
+   * [QUY TRÌNH MỚI] Người tạo chỉnh sửa và gửi lại đề xuất tạm ứng sau khi bị từ chối
+   */
+  async resubmit(proposalId, creatorId, updateData) {
+    const proposal = await AdvanceProposal.findById(proposalId);
+    if (!proposal) throw new Error('Đề xuất không tồn tại');
+
+    if (proposal.creator.toString() !== creatorId.toString()) {
+      throw new Error('Chỉ người tạo mới có quyền chỉnh sửa và gửi lại đề xuất');
+    }
+
+    const allowedStatuses = ['rejected', 'rejected_by_director', 'rejected_by_chairman', 'rejected_by_accounting'];
+    if (!allowedStatuses.includes(proposal.status)) {
+      throw new Error('Chỉ có thể chỉnh sửa và gửi lại khi đề xuất bị từ chối');
+    }
+
+    const creator = await User.findById(creatorId);
+    if (!creator) throw new Error('Người dùng không tồn tại');
+
+    if (Array.isArray(updateData.items) && updateData.items.length > 0) {
+      proposal.items = updateData.items.map((item, idx) => ({
+        stt: idx + 1,
+        mucDich: item.mucDich,
+        soTien: Number(item.soTien) || 0,
+      }));
+    }
+
+    if (updateData.bankAccount) {
+      proposal.bankAccount = updateData.bankAccount;
+    }
+
+    if (updateData.purchaseProposal !== undefined) {
+      proposal.purchaseProposal = updateData.purchaseProposal || null;
+    }
+
+    // Tính lại tổng số tiền tạm ứng
+    const totalAmount = proposal.items.reduce((sum, item) => sum + (Number(item.soTien) || 0), 0);
+    proposal.totalAmount = totalAmount;
+
+    // Xây dựng lại luồng phê duyệt từ đầu theo số tiền mới
+    const approvalFlow = this.buildApprovalFlow(creator.role, totalAmount);
+    const currentApprovalRole = this.getCurrentApprovalRole(approvalFlow);
+    const status = this.getStatusFromRole(currentApprovalRole);
+
+    proposal.approvalFlow = approvalFlow;
+    proposal.currentApprovalRole = currentApprovalRole;
+    proposal.status = status;
+    proposal.rejectionReason = ''; // Xóa lý do từ chối sau khi làm lại
 
     await proposal.save();
     return await this.getById(proposalId);
@@ -209,7 +316,7 @@ class AdvanceProposalService {
     const proposal = await AdvanceProposal.findById(proposalId);
     if (!proposal) throw new Error('Đề xuất không tồn tại');
 
-    if (proposal.status !== 'pending_settlement') {
+    if (proposal.status !== 'pending_settlement' && proposal.status !== 'rejected_settlement') {
       throw new Error('Đề xuất không ở trạng thái hoàn tạm ứng');
     }
 
@@ -228,7 +335,7 @@ class AdvanceProposalService {
 
     // Đánh dấu bước nộp hoàn ứng của người tạo là đã hoàn tất
     const creatorStep = proposal.approvalFlow.find(
-      step => step.role === 'creator' && step.status === 'pending'
+      step => step.role === 'creator'
     );
     if (creatorStep) {
       creatorStep.status = 'approved';
@@ -236,8 +343,51 @@ class AdvanceProposalService {
       creatorStep.date = new Date();
     }
 
+    // Đặt lại bước kế toán xác nhận là pending
+    const accountingFinalStep = proposal.approvalFlow.find(
+      step => step.step === 'Kế toán xác nhận hoàn tạm ứng'
+    );
+    if (accountingFinalStep) {
+      accountingFinalStep.status = 'pending';
+      accountingFinalStep.approver = null;
+      accountingFinalStep.comment = '';
+    }
+
     proposal.status = 'settlement_submitted';
     proposal.currentApprovalRole = 'ke_toan';
+    proposal.rejectionReason = ''; // Xóa lý do từ chối hoàn ứng nếu có
+
+    await proposal.save();
+    return await this.getById(proposalId);
+  }
+
+  /**
+   * [QUY TRÌNH MỚI] Kế toán từ chối chứng từ hoàn tạm ứng và yêu cầu người tạo làm lại
+   */
+  async rejectSettlement(proposalId, accountantId, reason) {
+    const proposal = await AdvanceProposal.findById(proposalId);
+    if (!proposal) throw new Error('Đề xuất không tồn tại');
+
+    if (proposal.status !== 'settlement_submitted') {
+      throw new Error('Đề xuất không ở trạng thái chờ xác nhận hoàn tạm ứng');
+    }
+
+    const accountant = await User.findById(accountantId);
+    if (!accountant) throw new Error('Người duyệt không tồn tại');
+
+    // Reset bước hoàn ứng của người tạo về pending để nộp lại
+    const creatorStep = proposal.approvalFlow.find(
+      step => step.role === 'creator'
+    );
+    if (creatorStep) {
+      creatorStep.status = 'pending';
+      creatorStep.approver = null;
+      creatorStep.comment = '';
+    }
+
+    proposal.status = 'rejected_settlement';
+    proposal.currentApprovalRole = 'creator'; // Trả về cho người tạo nộp lại chứng từ hoàn ứng
+    proposal.rejectionReason = reason || 'Kế toán từ chối chứng từ hoàn tạm ứng, yêu cầu làm lại';
 
     await proposal.save();
     return await this.getById(proposalId);

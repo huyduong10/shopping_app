@@ -107,13 +107,26 @@ const purchaseProposalSchema = new mongoose.Schema({
       invoiceDate:   { type: Date, default: null },
       files: [mongoose.Schema.Types.Mixed],
     },
-    // Thông tin hợp đồng kinh tế (khi actionType = 'contract')
+    // Thông tin hợp đồng kinh tế
     contractInfo: {
       contractNumber: { type: String, default: '' },
       partnerName:    { type: String, default: '' },
       files: [mongoose.Schema.Types.Mixed],
     },
-    // Liên kết đơn tạm ứng (khi actionType = 'advance')
+    // [QUY TRÌNH MỚI] Xác nhận Thu mua đã được nhận tiền tạm ứng trước đó độc lập
+    isAdvanced: {
+      type: Boolean,
+      default: false,
+    },
+    advanceAmount: {
+      type: Number,
+      default: 0,
+    },
+    advanceNote: {
+      type: String,
+      default: '',
+    },
+    // Liên kết mã đơn tạm ứng (nếu có)
     advanceProposalId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'AdvanceProposal',
@@ -121,6 +134,16 @@ const purchaseProposalSchema = new mongoose.Schema({
     },
     submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     submittedAt: { type: Date, default: null },
+  },
+  // [QUY TRÌNH MỚI] Lưu trữ các hóa đơn / hợp đồng đã được Giám đốc duyệt và Kế toán thanh toán hoàn tất
+  isInvoiceCompleted: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  invoiceCompletedAt: {
+    type: Date,
+    default: null,
   },
   status: {
     type: String,
@@ -161,7 +184,10 @@ const purchaseProposalSchema = new mongoose.Schema({
       'final_approved',           // Duyệt cuối cùng
       'disbursing',               // Đang giải ngân
       'completed',                // Hoàn thành
-      'rejected',                 // Từ chối
+      'rejected',                 // Từ chối hoàn toàn
+      'rejected_by_tp',           // Bị Trưởng phòng từ chối (trả về nhân viên sửa)
+      'rejected_by_director',     // Bị Giám đốc / Chủ tịch từ chối báo giá (trả về thu mua khảo giá lại)
+      'rejected_by_accounting',   // Bị Kế toán từ chối hóa đơn/chứng từ (trả về thu mua sửa lại)
     ],
     // [LUỒNG MỚI] Trạng thái ban đầu luôn là chờ Trưởng phòng duyệt yêu cầu
     // [LUỒNG CŨ] default: 'draft'

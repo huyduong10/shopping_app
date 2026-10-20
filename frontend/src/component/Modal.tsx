@@ -4,7 +4,7 @@ import { X } from 'lucide-react';
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
-  title: string;
+  title: React.ReactNode;
   children: React.ReactNode;
   maxWidth?: string;
 }
@@ -40,7 +40,11 @@ export const Modal: React.FC<ModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
-          <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{title}</h3>
+          {typeof title === 'string' ? (
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{title}</h3>
+          ) : (
+            <div style={{ flex: 1 }}>{title}</div>
+          )}
           <button
             type="button"
             className="btn btn-ghost btn-sm"

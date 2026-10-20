@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { advanceProposalService, uploadService } from '../../services';
 import { AdvanceProposal, SettlementType, SettlementAttachment } from '../../models';
-import { StatusBadge, ApprovalFlowTracker, Modal, AdvancePrintModal } from '../../component';
+import { StatusBadge, ApprovalFlowTracker, Modal, AdvancePrintModal, FilePreviewModal, PreviewFileItem } from '../../component';
 import { formatCurrency, formatDate, getRoleLabel, formatFileSize } from '../../utils/formatters';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -26,6 +26,9 @@ import {
   FileText,
   X,
   Printer,
+  Crown,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 
 const getFileIcon = (fileName: string, type?: string) => {
@@ -59,6 +62,20 @@ export const AdvanceDetailPage: React.FC = () => {
   const [isConfirmSettlementOpen, setIsConfirmSettlementOpen] = useState(false);
   const [isDisburseSuccessOpen, setIsDisburseSuccessOpen] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+
+  // [QUY TRÌNH MỚI] Modal chỉnh sửa và nộp lại đơn tạm ứng khi bị từ chối
+  const [isResubmitOpen, setIsResubmitOpen] = useState(false);
+  const [resubmitItems, setResubmitItems] = useState<Array<{ id: string; mucDich: string; soTien: number }>>([]);
+  const [resubmitBankAccount, setResubmitBankAccount] = useState({
+    bankName: '',
+    accountNumber: '',
+    accountHolder: '',
+  });
+
+  // [QUY TRÌNH MỚI] Modal Kế toán từ chối hoàn tạm ứng
+  const [isRejectSettlementOpen, setIsRejectSettlementOpen] = useState(false);
+  const [rejectSettlementReason, setRejectSettlementReason] = useState('');
+
   const [disburseSuccessInfo, setDisburseSuccessInfo] = useState<{
     code: string;
     amount: number;
@@ -67,11 +84,20 @@ export const AdvanceDetailPage: React.FC = () => {
     bankName: string;
     note: string;
   } | null>(null);
-  const [previewAttachment, setPreviewAttachment] = useState<{ name: string; url: string; type?: string } | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<PreviewFileItem | null>(null);
+  const [previewFileList, setPreviewFileList] = useState<PreviewFileItem[]>([]);
+  const [previewFileIndex, setPreviewFileIndex] = useState(0);
 
-  const handleOpenPreview = (name: string, url: string, type?: string) => {
-    // Nếu là file PDF, hiển thị xem trước trong modal
-    setPreviewAttachment({ name, url, type });
+  const handleOpenPreview = (name: string, url: string, type?: string, list?: PreviewFileItem[], index?: number) => {
+    const item: PreviewFileItem = { name, url, type };
+    setPreviewAttachment(item);
+    if (list && list.length > 0) {
+      setPreviewFileList(list);
+      setPreviewFileIndex(index !== undefined ? index : list.findIndex((f) => f.url === url));
+    } else {
+      setPreviewFileList([item]);
+      setPreviewFileIndex(0);
+    }
   };
 
   // Dữ liệu biểu mẫu trong các Modal
@@ -252,6 +278,110 @@ export const AdvanceDetailPage: React.FC = () => {
     }
   };
 
+  // [QUY TRÌNH MỚI] Mở modal chỉnh sửa và làm lại đơn tạm ứng khi bị từ chối
+  const handleOpenResubmitModal = () => {
+    if (!proposal) return;
+    setResubmitItems(
+      proposal.items && proposal.items.length > 0
+        ? proposal.items.map((item, idx) => ({
+            id: String(item._id || idx + 1),
+            mucDich: item.mucDich,
+            soTien: item.soTien,
+          }))
+        : [{ id: '1', mucDich: '', soTien: 0 }]
+    );
+    setResubmitBankAccount({
+      bankName: proposal.bankAccount?.bankName || '',
+      accountNumber: proposal.bankAccount?.accountNumber || '',
+      accountHolder: proposal.bankAccount?.accountHolder || proposal.creator?.fullName || '',
+    });
+    setIsResubmitOpen(true);
+  };
+
+  const handleAddResubmitItem = () => {
+    setResubmitItems((prev) => [
+      ...prev,
+      { id: Date.now().toString(), mucDich: '', soTien: 0 },
+    ]);
+  };
+
+  const handleRemoveResubmitItem = (index: number) => {
+    if (resubmitItems.length === 1) return;
+    setResubmitItems((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleUpdateResubmitItem = (index: number, field: 'mucDich' | 'soTien', value: any) => {
+    setResubmitItems((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const handleResubmit = async () => {
+    if (!proposal) return;
+    if (!resubmitBankAccount.bankName.trim() || !resubmitBankAccount.accountNumber.trim()) {
+      alert('Vui lòng điền đầy đủ Tên ngân hàng và Số tài khoản nhận tiền');
+      return;
+    }
+    for (let i = 0; i < resubmitItems.length; i++) {
+      if (!resubmitItems[i].mucDich.trim()) {
+        alert(`Vui lòng nhập mục đích tạm ứng cho dòng số ${i + 1}`);
+        return;
+      }
+      if (Number(resubmitItems[i].soTien) <= 0) {
+        alert(`Số tiền dòng số ${i + 1} phải lớn hơn 0`);
+        return;
+      }
+    }
+    setActionLoading(true);
+    try {
+      await advanceProposalService.resubmit(proposal._id, {
+        items: resubmitItems.map((item, idx) => ({
+          mucDich: item.mucDich.trim(),
+          soTien: Number(item.soTien),
+        })),
+        bankAccount: resubmitBankAccount,
+      });
+      setIsResubmitOpen(false);
+      fetchProposal(proposal._id);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // [QUY TRÌNH MỚI] Mở modal hoàn tạm ứng (prefill dữ liệu cũ nếu có)
+  const handleOpenSettlementModal = () => {
+    if (proposal?.settlement) {
+      setSettlementType(proposal.settlement.type || 'exact');
+      setSettlementAmount(proposal.settlement.amount || 0);
+      setSettlementNote(proposal.settlement.note || '');
+      setSettlementAttachments(proposal.settlement.attachments || []);
+    }
+    setIsSettlementOpen(true);
+  };
+
+  // [QUY TRÌNH MỚI] Kế toán từ chối hoàn tạm ứng
+  const handleRejectSettlement = async () => {
+    if (!proposal || !rejectSettlementReason.trim()) {
+      alert('Vui lòng nhập lý do từ chối báo cáo hoàn tạm ứng');
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await advanceProposalService.rejectSettlement(proposal._id, rejectSettlementReason);
+      setIsRejectSettlementOpen(false);
+      setRejectSettlementReason('');
+      fetchProposal(proposal._id);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: '5rem 0' }}>
@@ -272,22 +402,60 @@ export const AdvanceDetailPage: React.FC = () => {
     );
   }
 
-  // Điều kiện phân quyền thao tác theo vai trò
-  const isDirectorOrChairmanApproval =
-    proposal.currentApprovalRole === user?.role &&
-    (proposal.status === 'pending_director' || proposal.status === 'pending_chairman');
+  // [LUỒNG MỚI] Phân quyền duyệt đơn tạm ứng theo hạn mức 10 triệu VNĐ
+  const isOverTenMillion = (proposal.totalAmount || 0) > 10000000;
+
+  // Cảnh báo khi Giám đốc đang xem đơn > 10 triệu (thuộc thẩm quyền Chủ tịch phê duyệt)
+  const isDirectorWatchingOverLimit =
+    (proposal.status === 'pending_chairman' || proposal.status === 'pending_director') &&
+    isOverTenMillion &&
+    user?.role === 'giam_doc';
+
+  // Điều kiện lãnh đạo được bấm nút duyệt/từ chối theo phân quyền 10 triệu
+  const canUserApproveAdvance = () => {
+    if (proposal.status !== 'pending_director' && proposal.status !== 'pending_chairman') {
+      return false;
+    }
+    if (isOverTenMillion) {
+      // Đơn > 10 triệu: Chỉ Chủ tịch được duyệt
+      return user?.role === 'chu_tich';
+    }
+    // Đơn <= 10 triệu: Sếp (Giám đốc) duyệt, Chủ tịch cũng có thể duyệt
+    return user?.role === 'giam_doc' || user?.role === 'chu_tich';
+  };
+
+  // [QUY TRÌNH MỚI] Kiểm tra trạng thái bị từ chối
+  const isProposalRejected = [
+    'rejected',
+    'rejected_by_director',
+    'rejected_by_chairman',
+    'rejected_by_accounting',
+  ].includes(proposal.status);
+
+  const isSettlementRejected = proposal.status === 'rejected_settlement';
+
+  // Người tạo (hoặc lãnh đạo) có quyền chỉnh sửa & nộp lại đơn khi bị từ chối
+  const isCreatorTurnToResubmit =
+    isProposalRejected &&
+    (proposal.creator?._id === user?._id || user?.role === 'truong_phong' || user?.role === 'chu_tich');
 
   const isAccountingDisburseTurn =
     user?.role === 'ke_toan' &&
     proposal.status === 'pending_accounting';
 
   const isCreatorSettlementTurn =
-    proposal.status === 'pending_settlement' &&
+    (proposal.status === 'pending_settlement' || proposal.status === 'rejected_settlement') &&
     proposal.creator?._id === user?._id;
 
   const isAccountingSettlementConfirmTurn =
     user?.role === 'ke_toan' &&
     proposal.status === 'settlement_submitted';
+
+  const resubmitTotalAmount = resubmitItems.reduce(
+    (sum, item) => sum + (Number(item.soTien) || 0),
+    0
+  );
+  const isResubmitOverTenMillion = resubmitTotalAmount > 10000000;
 
   return (
     <div>
@@ -314,13 +482,30 @@ export const AdvanceDetailPage: React.FC = () => {
 
         {/* Thanh công cụ nút thao tác */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          {isDirectorOrChairmanApproval && (
+          {isCreatorTurnToResubmit && (
+            <button
+              onClick={handleOpenResubmitModal}
+              className="btn btn-warning"
+              style={{
+                gap: '0.4rem',
+                backgroundColor: '#f59e0b',
+                borderColor: '#d97706',
+                color: '#000000',
+                fontWeight: 700,
+              }}
+            >
+              <FileCheck size={16} />
+              <span>Chỉnh Sửa & Gửi Lại Đơn Tạm Ứng</span>
+            </button>
+          )}
+
+          {canUserApproveAdvance() && (
             <>
-              <button onClick={() => setIsApproveOpen(true)} className="btn btn-success">
-                <CheckCircle2 size={16} />
-                <span>Duyệt Tạm Ứng</span>
+              <button onClick={() => setIsApproveOpen(true)} className="btn btn-success" style={{ gap: '0.4rem' }}>
+                {isOverTenMillion ? <Crown size={16} /> : <CheckCircle2 size={16} />}
+                <span>{isOverTenMillion ? 'Chủ Tịch Duyệt Tạm Ứng' : 'Sếp Duyệt Tạm Ứng'}</span>
               </button>
-              <button onClick={() => setIsRejectOpen(true)} className="btn btn-danger">
+              <button onClick={() => setIsRejectOpen(true)} className="btn btn-danger" style={{ gap: '0.4rem' }}>
                 <XCircle size={16} />
                 <span>Từ Chối</span>
               </button>
@@ -341,17 +526,23 @@ export const AdvanceDetailPage: React.FC = () => {
           )}
 
           {isCreatorSettlementTurn && (
-            <button onClick={() => setIsSettlementOpen(true)} className="btn btn-warning">
+            <button onClick={handleOpenSettlementModal} className="btn btn-warning" style={{ gap: '0.4rem' }}>
               <Receipt size={16} />
-              <span>Nộp Báo Cáo Hoàn Tạm Ứng</span>
+              <span>{proposal.status === 'rejected_settlement' ? 'Làm Lại & Nộp Lại Báo Cáo Hoàn Ứng' : 'Nộp Báo Cáo Hoàn Tạm Ứng'}</span>
             </button>
           )}
 
           {isAccountingSettlementConfirmTurn && (
-            <button onClick={() => setIsConfirmSettlementOpen(true)} className="btn btn-primary">
-              <FileCheck size={16} />
-              <span>Xác Nhận Quyết Toán Hoàn Ứng</span>
-            </button>
+            <>
+              <button onClick={() => setIsConfirmSettlementOpen(true)} className="btn btn-primary" style={{ gap: '0.4rem' }}>
+                <FileCheck size={16} />
+                <span>Xác Nhận Quyết Toán Hoàn Ứng</span>
+              </button>
+              <button onClick={() => setIsRejectSettlementOpen(true)} className="btn btn-danger" style={{ gap: '0.4rem' }}>
+                <XCircle size={16} />
+                <span>Từ Chối Hoàn Ứng</span>
+              </button>
+            </>
           )}
 
           <button
@@ -366,6 +557,160 @@ export const AdvanceDetailPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* [QUY TRÌNH MỚI] Banner cảnh báo Đơn tạm ứng bị từ chối và hướng dẫn làm lại */}
+      {isProposalRejected && (
+        <div
+          style={{
+            padding: '1.25rem 1.5rem',
+            backgroundColor: 'rgba(239, 68, 68, 0.12)',
+            border: '1.5px solid rgba(239, 68, 68, 0.4)',
+            borderRadius: 'var(--radius-lg)',
+            marginBottom: '1.5rem',
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: '1rem',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.85rem', flex: 1, minWidth: '280px' }}>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#ef4444',
+                flexShrink: 0,
+              }}
+            >
+              <AlertCircle size={22} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '1.05rem', color: '#f87171', marginBottom: '0.35rem' }}>
+                Đề Xuất Tạm Ứng Đã Bị Từ Chối (Được Chuyển Trả Về Bước Làm Lại)
+              </div>
+              <div style={{ fontSize: '0.875rem', color: '#ffffff', marginBottom: '0.5rem' }}>
+                <strong>Lý do từ chối:</strong> {proposal.rejectionReason || 'Chưa cung cấp lý do chi tiết'}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Quy trình đã chuyển quyền xử lý về cho Người tạo đơn. Vui lòng rà soát lại thông tin (mục đích, số tiền, tài khoản nhận), bấm nút bên dưới để chỉnh sửa và nộp lại đề xuất.
+              </div>
+            </div>
+          </div>
+
+          {isCreatorTurnToResubmit && (
+            <button
+              onClick={handleOpenResubmitModal}
+              className="btn btn-warning"
+              style={{
+                gap: '0.5rem',
+                backgroundColor: '#f59e0b',
+                borderColor: '#d97706',
+                color: '#000000',
+                fontWeight: 700,
+                padding: '0.65rem 1.25rem',
+              }}
+            >
+              <FileCheck size={18} />
+              <span>Chỉnh Sửa & Gửi Lại Đơn Tạm Ứng</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* [QUY TRÌNH MỚI] Banner cảnh báo Hoàn ứng bị từ chối */}
+      {isSettlementRejected && (
+        <div
+          style={{
+            padding: '1.25rem 1.5rem',
+            backgroundColor: 'rgba(239, 68, 68, 0.12)',
+            border: '1.5px solid rgba(239, 68, 68, 0.4)',
+            borderRadius: 'var(--radius-lg)',
+            marginBottom: '1.5rem',
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: '1rem',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.85rem', flex: 1, minWidth: '280px' }}>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#ef4444',
+                flexShrink: 0,
+              }}
+            >
+              <AlertCircle size={22} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '1.05rem', color: '#f87171', marginBottom: '0.35rem' }}>
+                Chứng Từ Hoàn Tạm Ứng Bị Kế Toán Từ Chối (Yêu Cầu Làm Lại)
+              </div>
+              <div style={{ fontSize: '0.875rem', color: '#ffffff', marginBottom: '0.5rem' }}>
+                <strong>Lý do từ chối:</strong> {proposal.rejectionReason || 'Kế toán yêu cầu nộp lại chứng từ hoàn ứng'}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Vui lòng kiểm tra lại số tiền chênh lệch thừa/thiếu và cập nhật các hóa đơn, chứng từ hợp lệ để gửi lại cho Kế toán xác nhận.
+              </div>
+            </div>
+          </div>
+
+          {isCreatorSettlementTurn && (
+            <button
+              onClick={handleOpenSettlementModal}
+              className="btn btn-warning"
+              style={{
+                gap: '0.5rem',
+                backgroundColor: '#f59e0b',
+                borderColor: '#d97706',
+                color: '#000000',
+                fontWeight: 700,
+                padding: '0.65rem 1.25rem',
+              }}
+            >
+              <Receipt size={18} />
+              <span>Chỉnh Sửa & Nộp Lại Báo Cáo Hoàn Ứng</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* [LUỒNG MỚI] Thông báo cho Giám đốc khi xem đơn tạm ứng > 10 triệu */}
+      {isDirectorWatchingOverLimit && (
+        <div
+          style={{
+            padding: '0.85rem 1.25rem',
+            backgroundColor: 'rgba(234, 179, 8, 0.12)',
+            border: '1px solid rgba(234, 179, 8, 0.3)',
+            borderRadius: 'var(--radius-md)',
+            color: '#fef08a',
+            marginBottom: '1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+          }}
+        >
+          <Crown size={20} color="#eab308" />
+          <span style={{ fontSize: '0.875rem' }}>
+            <strong>Thông báo thẩm quyền phê duyệt:</strong> Đơn tạm ứng có tổng số tiền là{' '}
+            <strong style={{ color: '#ffffff' }}>{formatCurrency(proposal.totalAmount)}</strong> (&gt; 10.000.000 VNĐ).
+            Theo quy định, quyền duyệt chi tạm ứng do <strong>Chủ tịch</strong> trực tiếp phê duyệt (Giám đốc không phê duyệt đơn này).
+          </span>
+        </div>
+      )}
 
       {/* Bố cục nội dung chính */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '1.75rem' }}>
@@ -510,7 +855,12 @@ export const AdvanceDetailPage: React.FC = () => {
               }}
             >
               <div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Tổng Tiền Tạm Ứng</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Tổng Tiền Tạm Ứng</span>
+                  <span className={`badge ${isOverTenMillion ? 'badge-purple' : 'badge-info'}`} style={{ fontSize: '0.675rem' }}>
+                    {isOverTenMillion ? '👑 Cấp duyệt: Chủ tịch' : '👔 Cấp duyệt: Sếp (Giám đốc)'}
+                  </span>
+                </div>
                 <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#ffffff' }} className="font-mono">
                   {formatCurrency(proposal.totalAmount)}
                 </div>
@@ -674,7 +1024,7 @@ export const AdvanceDetailPage: React.FC = () => {
                                 cursor: 'pointer',
                                 position: 'relative',
                               }}
-                              onClick={() => handleOpenPreview(fileName, fileUrl, fileType)}
+                              onClick={() => handleOpenPreview(fileName, fileUrl, fileType, proposal.settlement?.attachments, idx)}
                               title="Bấm để xem ảnh lớn"
                             >
                               <img
@@ -718,7 +1068,7 @@ export const AdvanceDetailPage: React.FC = () => {
                             >
                               <button
                                 type="button"
-                                onClick={() => handleOpenPreview(fileName, fileUrl, fileType)}
+                                onClick={() => handleOpenPreview(fileName, fileUrl, fileType, proposal.settlement?.attachments, idx)}
                                 className="btn btn-primary btn-sm"
                                 style={{ fontSize: '0.725rem', padding: '0.25rem 0.6rem', gap: '0.3rem' }}
                                 title="Xem trực tiếp không cần tải về"
@@ -770,12 +1120,37 @@ export const AdvanceDetailPage: React.FC = () => {
                 borderRadius: 'var(--radius-lg)',
               }}
             >
-              <div style={{ fontWeight: 700, color: '#f87171', marginBottom: '0.35rem' }}>
-                Lý Do Từ Chối:
+              <div style={{ fontWeight: 700, color: '#f87171', marginBottom: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <AlertCircle size={16} />
+                <span>Lý Do Từ Chối:</span>
               </div>
-              <div style={{ fontSize: '0.85rem', color: '#fca5a5' }}>
+              <div style={{ fontSize: '0.85rem', color: '#fca5a5', lineHeight: 1.5, marginBottom: isCreatorTurnToResubmit || (isCreatorSettlementTurn && isSettlementRejected) ? '0.75rem' : 0 }}>
                 {proposal.rejectionReason}
               </div>
+
+              {isCreatorTurnToResubmit && (
+                <button
+                  type="button"
+                  onClick={handleOpenResubmitModal}
+                  className="btn btn-warning btn-sm"
+                  style={{ width: '100%', fontSize: '0.775rem', fontWeight: 700, gap: '0.35rem' }}
+                >
+                  <FileCheck size={14} />
+                  <span>Sửa & Gửi Lại Đơn</span>
+                </button>
+              )}
+
+              {isCreatorSettlementTurn && isSettlementRejected && (
+                <button
+                  type="button"
+                  onClick={handleOpenSettlementModal}
+                  className="btn btn-warning btn-sm"
+                  style={{ width: '100%', fontSize: '0.775rem', fontWeight: 700, gap: '0.35rem' }}
+                >
+                  <Receipt size={14} />
+                  <span>Làm Lại Hoàn Ứng</span>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1201,6 +1576,216 @@ export const AdvanceDetailPage: React.FC = () => {
         </div>
       </Modal>
 
+      {/* 7. MODAL CHỈNH SỬA VÀ GỬI LẠI ĐƠN TẠM ỨNG (KHI BỊ TỪ CHỐI) */}
+      <Modal
+        isOpen={isResubmitOpen}
+        onClose={() => setIsResubmitOpen(false)}
+        title="Chỉnh Sửa & Gửi Lại Đơn Tạm Ứng"
+        maxWidth="750px"
+      >
+        <div style={{ marginBottom: '1.25rem' }}>
+          <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+            Đơn của bạn đã được chuyển trả về để chỉnh sửa. Vui lòng rà soát lại thông tin tài khoản hoặc mục đích, số tiền tạm ứng rồi gửi lại để tiếp tục quy trình duyệt.
+          </p>
+          {proposal.rejectionReason && (
+            <div
+              style={{
+                marginTop: '0.75rem',
+                padding: '0.75rem 1rem',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: 'var(--radius-md)',
+                fontSize: '0.825rem',
+                color: '#f87171',
+              }}
+            >
+              <strong>Lý do từ chối trước đó:</strong> {proposal.rejectionReason}
+            </div>
+          )}
+        </div>
+
+        {/* Thông tin tài khoản thụ hưởng */}
+        <div
+          style={{
+            padding: '1rem',
+            backgroundColor: 'rgba(255, 255, 255, 0.02)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            marginBottom: '1.25rem',
+          }}
+        >
+          <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#ffffff', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <CreditCard size={16} color="var(--accent-cyan)" />
+            <span>Thông Tin Tài Khoản Nhận Tạm Ứng</span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
+            <div>
+              <label className="form-label" style={{ fontSize: '0.775rem' }}>Tên Ngân Hàng <span className="required">*</span></label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="VD: MB Bank, Vietcombank..."
+                value={resubmitBankAccount.bankName}
+                onChange={(e) => setResubmitBankAccount({ ...resubmitBankAccount, bankName: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="form-label" style={{ fontSize: '0.775rem' }}>Số Tài Khoản <span className="required">*</span></label>
+              <input
+                type="text"
+                className="form-input font-mono"
+                placeholder="VD: 0987654321"
+                value={resubmitBankAccount.accountNumber}
+                onChange={(e) => setResubmitBankAccount({ ...resubmitBankAccount, accountNumber: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="form-label" style={{ fontSize: '0.775rem' }}>Chủ Tài Khoản</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Tên chủ tài khoản..."
+                value={resubmitBankAccount.accountHolder}
+                onChange={(e) => setResubmitBankAccount({ ...resubmitBankAccount, accountHolder: e.target.value })}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Danh sách mục chi tạm ứng */}
+        <div style={{ marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Banknote size={16} color="var(--primary)" />
+              <span>Nội Dung / Mục Đích Tạm Ứng Chi Tiết</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleAddResubmitItem}
+              className="btn btn-secondary btn-sm"
+              style={{ gap: '0.35rem', fontSize: '0.75rem' }}
+            >
+              <Plus size={14} />
+              <span>Thêm Dòng</span>
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            {resubmitItems.map((item, idx) => (
+              <div
+                key={item.id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '40px 1fr 180px 36px',
+                  gap: '0.5rem',
+                  alignItems: 'center',
+                }}
+              >
+                <div style={{ textAlign: 'center', fontWeight: 600, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  #{idx + 1}
+                </div>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Mục đích tạm ứng..."
+                  value={item.mucDich}
+                  onChange={(e) => handleUpdateResubmitItem(idx, 'mucDich', e.target.value)}
+                />
+                <input
+                  type="number"
+                  min="0"
+                  className="form-input font-mono"
+                  placeholder="Số tiền..."
+                  value={item.soTien || ''}
+                  onChange={(e) => handleUpdateResubmitItem(idx, 'soTien', Number(e.target.value))}
+                />
+                <button
+                  type="button"
+                  disabled={resubmitItems.length === 1}
+                  onClick={() => handleRemoveResubmitItem(idx)}
+                  className="btn btn-ghost btn-sm"
+                  style={{ color: resubmitItems.length === 1 ? 'var(--text-muted)' : 'var(--danger)', padding: '0.35rem' }}
+                  title="Xóa dòng này"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Tổng tiền và cấp duyệt dự kiến */}
+          <div
+            style={{
+              marginTop: '1rem',
+              padding: '0.85rem 1rem',
+              backgroundColor: 'rgba(255, 255, 255, 0.03)',
+              borderRadius: 'var(--radius-md)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Cấp phê duyệt theo số tiền mới:</span>
+              <div style={{ marginTop: '0.2rem' }}>
+                <span className={`badge ${isResubmitOverTenMillion ? 'badge-purple' : 'badge-info'}`}>
+                  {isResubmitOverTenMillion ? '👑 Đơn > 10 triệu: Chủ tịch duyệt' : '👔 Đơn ≤ 10 triệu: Sếp (Giám đốc) duyệt'}
+                </span>
+              </div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Tổng Tiền Mới:</span>
+              <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-cyan)' }} className="font-mono">
+                {formatCurrency(resubmitTotalAmount)}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="modal-footer" style={{ margin: '1.5rem -1.65rem -1.65rem -1.65rem' }}>
+          <button onClick={() => setIsResubmitOpen(false)} className="btn btn-secondary">Hủy</button>
+          <button onClick={handleResubmit} disabled={actionLoading} className="btn btn-primary" style={{ gap: '0.4rem' }}>
+            <FileCheck size={16} />
+            <span>{actionLoading ? 'Đang gửi lại...' : 'Xác Nhận & Gửi Lại Đơn Tạm Ứng'}</span>
+          </button>
+        </div>
+      </Modal>
+
+      {/* 8. MODAL KẾ TOÁN TỪ CHỐI HOÀN TẠM ỨNG */}
+      <Modal
+        isOpen={isRejectSettlementOpen}
+        onClose={() => setIsRejectSettlementOpen(false)}
+        title="Từ Chối Chứng Từ Hoàn Tạm Ứng"
+      >
+        <div style={{ marginBottom: '1.25rem' }}>
+          <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+            Kế toán từ chối hồ sơ hoàn tạm ứng và yêu cầu người tạo chỉnh sửa/bổ sung chứng từ làm lại:
+          </p>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Lý do từ chối & Yêu cầu làm lại <span className="required">*</span></label>
+          <textarea
+            className="form-textarea"
+            required
+            rows={4}
+            placeholder="VD: Hóa đơn chưa có thuế VAT hợp lệ / Số tiền thừa thực nộp thiếu 200.000đ, vui lòng kiểm tra và gửi lại..."
+            value={rejectSettlementReason}
+            onChange={(e) => setRejectSettlementReason(e.target.value)}
+          />
+        </div>
+        <div className="modal-footer" style={{ margin: '1.5rem -1.65rem -1.65rem -1.65rem' }}>
+          <button onClick={() => setIsRejectSettlementOpen(false)} className="btn btn-secondary">Hủy</button>
+          <button
+            onClick={handleRejectSettlement}
+            disabled={actionLoading || !rejectSettlementReason.trim()}
+            className="btn btn-danger"
+          >
+            {actionLoading ? 'Đang xử lý...' : 'Xác Nhận Từ Chối & Yêu Cầu Làm Lại'}
+          </button>
+        </div>
+      </Modal>
+
       {/* 6. MODAL XEM TRỰC TIẾP TÀI LIỆU / ẢNH CHỨNG TỪ */}
       <Modal
         isOpen={!!previewAttachment}
@@ -1416,6 +2001,16 @@ export const AdvanceDetailPage: React.FC = () => {
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
         proposal={proposal}
+      />
+
+      {/* MODAL XEM TRƯỚC VÀ KIỂM TRA CHỨNG TỪ HOÀN ỨNG / HÓA ĐƠN */}
+      <FilePreviewModal
+        isOpen={!!previewAttachment}
+        onClose={() => setPreviewAttachment(null)}
+        file={previewAttachment}
+        files={previewFileList}
+        initialIndex={previewFileIndex}
+        title="Kiểm Tra Chứng Từ Quyết Toán Hoàn Ứng"
       />
     </div>
   );

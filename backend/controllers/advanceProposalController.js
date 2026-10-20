@@ -85,6 +85,32 @@ class AdvanceProposalController {
     }
   }
 
+  async resubmit(req, res) {
+    try {
+      const proposal = await advanceProposalService.resubmit(
+        req.params.id,
+        req.user._id,
+        req.body
+      );
+      res.status(200).json({ success: true, data: proposal });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  async rejectSettlement(req, res) {
+    try {
+      const proposal = await advanceProposalService.rejectSettlement(
+        req.params.id,
+        req.user._id,
+        req.body.reason
+      );
+      res.status(200).json({ success: true, data: proposal });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
   async confirmSettlement(req, res) {
     try {
       const proposal = await advanceProposalService.confirmSettlement(

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { purchaseProposalService, paymentProposalService, uploadService } from '../../services';
-import { PurchaseProposal } from '../../models';
+import { purchaseProposalService, paymentProposalService, uploadService, authService } from '../../services';
+import { PurchaseProposal, User } from '../../models';
+import { FilePreviewModal, PreviewFileItem } from '../../component';
 import { formatCurrency } from '../../utils/formatters';
 import {
   createLocalAttachments,
@@ -40,9 +41,9 @@ export const CreatePaymentPage: React.FC = () => {
   const preselectedPurchaseId = searchParams.get('purchaseProposalId');
   const { user } = useAuth();
 
-  // Chỉ kế toán được truy cập trang này
+  // Chỉ Kế toán (hoặc Quản trị viên) mới có nghiệp vụ lập đề xuất thanh toán
   useEffect(() => {
-    if (user && user.role !== 'ke_toan') {
+    if (user && !['ke_toan', 'admin'].includes(user.role)) {
       navigate('/dashboard', { replace: true });
     }
   }, [user, navigate]);
@@ -52,6 +53,11 @@ export const CreatePaymentPage: React.FC = () => {
   const [selectedProposal, setSelectedProposal] = useState<PurchaseProposal | null>(null);
   const [searchPurchase, setSearchPurchase] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
+  const [users, setUsers] = useState<User[]>([]);
+
+  useEffect(() => {
+    authService.getAllUsers().then(setUsers).catch(console.error);
+  }, []);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +65,22 @@ export const CreatePaymentPage: React.FC = () => {
   const [quoteUploading, setQuoteUploading] = useState(false);
   const [contractUploading, setContractUploading] = useState(false);
   const [invoiceUploading, setInvoiceUploading] = useState(false);
+
+  // Preview chứng từ (hóa đơn, hợp đồng, báo giá)
+  const [previewAttachment, setPreviewAttachment] = useState<PreviewFileItem | null>(null);
+  const [previewFileList, setPreviewFileList] = useState<PreviewFileItem[]>([]);
+  const [previewFileIndex, setPreviewFileIndex] = useState(0);
+
+  const handlePreviewFile = (fileItem: PreviewFileItem, list?: PreviewFileItem[], index?: number) => {
+    setPreviewAttachment(fileItem);
+    if (list && list.length > 0) {
+      setPreviewFileList(list);
+      setPreviewFileIndex(index !== undefined ? index : list.findIndex((f) => f.url === fileItem.url));
+    } else {
+      setPreviewFileList([fileItem]);
+      setPreviewFileIndex(0);
+    }
+  };
 
   // [LUỒNG MỚI] Hồ sơ đề xuất thanh toán bao gồm:
   // 1. Danh mục yêu cầu vật tư
@@ -109,12 +131,18 @@ export const CreatePaymentPage: React.FC = () => {
     const totalAmount = proposal.totalActualAmount || proposal.totalEstimatedAmount;
     const remaining = Math.max(0, totalAmount - (proposal.totalDisbursed || 0));
 
-    // Điền sẵn thông tin người thụ hưởng theo người tạo đơn đề xuất mua sắm
-    const creator = proposal.creator;
-    const creatorBank = (creator as any)?.bankAccount;
-    const beneficiaryName = creator?.fullName || creatorBank?.accountHolder || '';
-    const accountNumber = creatorBank?.accountNumber || '';
-    const bankName = creatorBank?.bankName || '';
+    // [QUY TRÌNH MỚI] Khâu chi trả thanh toán sẽ trả về cho bên Thu mua (người thực hiện mua sắm/hợp đồng), KHÔNG phải nhân viên đề xuất
+    const submittedByObj = (proposal.procurementExecution?.submittedBy as any);
+    const procurerUser = (typeof submittedByObj === 'object' && submittedByObj !== null)
+      ? submittedByObj
+      : users.find((u) => u._id === submittedByObj || u.role === 'thu_mua');
+    const procurerBank = procurerUser?.bankAccount;
+    const partnerName = (proposal as any).procurementExecution?.contractInfo?.partnerName;
+
+    const beneficiaryName = procurerUser?.fullName || procurerBank?.accountHolder || partnerName || 'Bên Thu Mua';
+    const accountNumber = procurerBank?.accountNumber || '';
+    const bankName = procurerBank?.bankName || '';
+    const branch = procurerBank?.branch || '';
 
     // [LUỒNG MỚI] Kế thừa danh mục yêu cầu vật tư được thanh toán
     const proposalItems = (proposal.items || []).map((it, idx) => ({
@@ -182,16 +210,29 @@ export const CreatePaymentPage: React.FC = () => {
       smartReason = `Thanh toán chi phí mua sắm theo Hợp đồng số ${executionContract.contractNumber} cho đơn ${proposal.proposalCode}`;
     }
 
+    // [QUY TRÌNH MỚI] Kiểm tra khoản Thu mua đã xác nhận tạm ứng độc lập để tự động đối trừ
+    const isAdv = Boolean(proposal.procurementExecution?.isAdvanced);
+    const advAmount = Number(proposal.procurementExecution?.advanceAmount) || 0;
+    const advNote = proposal.procurementExecution?.advanceNote || '';
+    const remainingAfterAdv = Math.max(0, remaining - (isAdv ? advAmount : 0));
+
+    // Mặc định đề xuất số tiền thanh toán: Nếu có tạm ứng thì lấy phần còn thiếu sau đối trừ, ngược lại lấy toàn bộ số tiền còn lại
+    const defaultAmount = isAdv && advAmount > 0 ? remainingAfterAdv : remaining;
+    let defaultInstallmentNote = '';
+    if (isAdv && advAmount > 0) {
+      defaultInstallmentNote = `Đối trừ tạm ứng ${formatCurrency(advAmount)}${advNote ? ` (${advNote})` : ''} - Chi trả số tiền còn thiếu`;
+    }
+
     setForm((prev) => ({
       ...prev,
-      amount: remaining,
+      amount: defaultAmount,
       paymentReason: smartReason,
-      installmentNote: '',
+      installmentNote: defaultInstallmentNote,
       beneficiary: {
         name: beneficiaryName,
         accountNumber: accountNumber,
         bankName: bankName,
-        branch: prev.beneficiary.branch || '',
+        branch: branch || prev.beneficiary.branch || '',
       },
       items: proposalItems,
       quotationAttachments: quotationFiles,
@@ -210,17 +251,34 @@ export const CreatePaymentPage: React.FC = () => {
     }));
   };
 
-  const handleFillCreatorBeneficiary = () => {
-    if (!selectedProposal?.creator) return;
-    const creator = selectedProposal.creator;
-    const creatorBank = (creator as any)?.bankAccount;
+  const handleFillProcurerBeneficiary = () => {
+    const submittedByObj = (selectedProposal?.procurementExecution?.submittedBy as any);
+    const procurerUser = (typeof submittedByObj === 'object' && submittedByObj !== null)
+      ? submittedByObj
+      : users.find((u) => u._id === submittedByObj || u.role === 'thu_mua');
+    if (!procurerUser) return;
+    const procurerBank = procurerUser.bankAccount;
     setForm((prev) => ({
       ...prev,
       beneficiary: {
-        name: creator?.fullName || creatorBank?.accountHolder || prev.beneficiary.name,
-        accountNumber: creatorBank?.accountNumber || prev.beneficiary.accountNumber,
-        bankName: creatorBank?.bankName || prev.beneficiary.bankName,
-        branch: prev.beneficiary.branch || '',
+        name: procurerUser.fullName || procurerBank?.accountHolder || 'Bên Thu Mua',
+        accountNumber: procurerBank?.accountNumber || '',
+        bankName: procurerBank?.bankName || '',
+        branch: procurerBank?.branch || '',
+      },
+    }));
+  };
+
+  const handleFillPartnerBeneficiary = () => {
+    const partner = (selectedProposal as any)?.procurementExecution?.contractInfo?.partnerName;
+    if (!partner) return;
+    setForm((prev) => ({
+      ...prev,
+      beneficiary: {
+        name: partner,
+        accountNumber: '',
+        bankName: '',
+        branch: '',
       },
     }));
   };
@@ -482,11 +540,18 @@ export const CreatePaymentPage: React.FC = () => {
     }
   };
 
+  const isSelectedAdvanced = Boolean(selectedProposal?.procurementExecution?.isAdvanced);
+  const advanceAmount = Number(selectedProposal?.procurementExecution?.advanceAmount) || 0;
+  const advanceNote = selectedProposal?.procurementExecution?.advanceNote || '';
+
   const remainingAmount = selectedProposal
     ? Math.max(0, (selectedProposal.totalActualAmount || selectedProposal.totalEstimatedAmount) - (selectedProposal.totalDisbursed || 0))
     : 0;
 
-  if (user?.role !== 'ke_toan') {
+  // Số tiền còn lại thực tế cần chi trả sau khi đối trừ số tiền Thu mua đã tạm ứng trước:
+  const remainingAfterAdvance = Math.max(0, remainingAmount - (isSelectedAdvanced ? advanceAmount : 0));
+
+  if (!user || !['ke_toan', 'admin'].includes(user.role)) {
     return null;
   }
 
@@ -500,7 +565,7 @@ export const CreatePaymentPage: React.FC = () => {
         <div>
           <h1 style={{ fontSize: '1.5rem', color: '#ffffff' }}>Lập Đề Xuất Thanh Toán Mới</h1>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            Chọn đơn mua sắm đã được duyệt, nhập thông tin thanh toán và người thụ hưởng để gửi phê duyệt chi.
+            Kế toán tiếp nhận hóa đơn / hợp đồng từ Thu mua để lập đề xuất thanh toán trình Lãnh đạo (Giám đốc/Chủ tịch) xác nhận giải ngân, sau đó duyệt chi.
           </p>
         </div>
       </div>
@@ -745,6 +810,100 @@ export const CreatePaymentPage: React.FC = () => {
               </div>
             </div>
           )}
+
+          {/* [QUY TRÌNH MỚI] Thông báo tình trạng Tạm Ứng Độc Lập của Thu Mua */}
+          {selectedProposal && isSelectedAdvanced && (
+            <div
+              style={{
+                marginTop: '1rem',
+                padding: '1.15rem 1.25rem',
+                backgroundColor: 'rgba(245, 158, 11, 0.08)',
+                border: '1px solid rgba(245, 158, 11, 0.35)',
+                borderRadius: 'var(--radius-md)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <AlertCircle size={20} color="#f59e0b" />
+                  <span style={{ fontWeight: 700, color: '#fbbf24', fontSize: '0.95rem' }}>
+                    Thu mua xác nhận: Đơn hàng này ĐÃ ĐƯỢC TẠM ỨNG trước đó
+                  </span>
+                </div>
+                <span className="badge badge-warning" style={{ fontSize: '0.775rem', fontWeight: 700 }}>
+                  Đã nhận tạm ứng: {formatCurrency(advanceAmount)}
+                </span>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                  gap: '0.85rem',
+                  padding: '0.85rem 1rem',
+                  backgroundColor: 'rgba(0, 0, 0, 0.25)',
+                  borderRadius: 'var(--radius-sm)',
+                  marginBottom: '0.85rem',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                    Số Tiền Đã Tạm Ứng
+                  </div>
+                  <div className="font-mono" style={{ fontSize: '1rem', fontWeight: 800, color: '#fbbf24' }}>
+                    {formatCurrency(advanceAmount)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                    Mã Đơn / Ghi Chú Tạm Ứng
+                  </div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#ffffff' }}>
+                    {advanceNote || 'Không có ghi chú cụ thể'}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                    Số Tiền Còn Thiếu Sau Tạm Ứng
+                  </div>
+                  <div className="font-mono" style={{ fontSize: '1rem', fontWeight: 800, color: '#38bdf8' }}>
+                    {formatCurrency(remainingAfterAdvance)}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.775rem', color: 'var(--text-secondary)' }}>Thao tác điền nhanh:</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.75rem', color: '#38bdf8', borderColor: 'rgba(56, 189, 248, 0.4)' }}
+                  onClick={() => {
+                    setForm((prev) => ({
+                      ...prev,
+                      amount: remainingAfterAdvance,
+                      installmentNote: `Đối trừ tạm ứng: ${formatCurrency(advanceAmount)}${advanceNote ? ` (${advanceNote})` : ''} - Chi trả số tiền còn thiếu`,
+                    }));
+                  }}
+                >
+                  Điền số tiền còn thiếu sau đối trừ ({formatCurrency(remainingAfterAdvance)})
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.75rem', color: 'var(--text-muted)' }}
+                  onClick={() => {
+                    setForm((prev) => ({
+                      ...prev,
+                      amount: remainingAmount,
+                      installmentNote: '',
+                    }));
+                  }}
+                >
+                  Điền toàn bộ giá trị đơn ({formatCurrency(remainingAmount)})
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* [LUỒNG MỚI] BƯỚC 2: HỒ SƠ CĂN CỨ THANH TOÁN (YÊU CẦU VẬT TƯ, BÁO GIÁ, HỢP ĐỒNG) */}
@@ -898,16 +1057,15 @@ export const CreatePaymentPage: React.FC = () => {
                         </span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                        <a
-                          href={file.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => handlePreviewFile(file, form.quotationAttachments, qIdx)}
                           className="btn btn-ghost btn-sm"
-                          style={{ padding: '0.25rem' }}
-                          title="Xem file"
+                          style={{ padding: '0.25rem', color: 'var(--accent-cyan)' }}
+                          title="Xem báo giá"
                         >
                           <Eye size={13} />
-                        </a>
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleRemoveQuote(qIdx)}
@@ -1013,16 +1171,15 @@ export const CreatePaymentPage: React.FC = () => {
                         </span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                        <a
-                          href={file.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => handlePreviewFile(file, form.contractInfo.files, cIdx)}
                           className="btn btn-ghost btn-sm"
-                          style={{ padding: '0.25rem' }}
+                          style={{ padding: '0.25rem', color: 'var(--success)' }}
                           title="Xem hợp đồng"
                         >
                           <Eye size={13} />
-                        </a>
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleRemoveContractFile(cIdx)}
@@ -1127,16 +1284,15 @@ export const CreatePaymentPage: React.FC = () => {
                         </span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                        <a
-                          href={file.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => handlePreviewFile(file, form.invoiceInfo.files, iIdx)}
                           className="btn btn-ghost btn-sm"
-                          style={{ padding: '0.25rem' }}
+                          style={{ padding: '0.25rem', color: '#f59e0b' }}
                           title="Xem hóa đơn"
                         >
                           <Eye size={13} />
-                        </a>
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleRemoveInvoiceFile(iIdx)}
@@ -1194,8 +1350,20 @@ export const CreatePaymentPage: React.FC = () => {
                 onChange={(e) => setForm((prev) => ({ ...prev, amount: Number(e.target.value) }))}
               />
               {selectedProposal && (
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
-                  Số tiền còn lại khả dụng: <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>{formatCurrency(remainingAmount)}</span>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem', lineHeight: 1.5 }}>
+                  {isSelectedAdvanced && advanceAmount > 0 ? (
+                    <div>
+                      <span style={{ color: '#fbbf24', fontWeight: 600 }}>
+                        Đã tạm ứng trước: {formatCurrency(advanceAmount)}.
+                      </span>{' '}
+                      Số tiền còn thiếu thực tế: <span style={{ color: 'var(--accent-cyan)', fontWeight: 700 }}>{formatCurrency(remainingAfterAdvance)}</span>
+                      {' '}(Tối đa khả dụng theo đơn: {formatCurrency(remainingAmount)})
+                    </div>
+                  ) : (
+                    <div>
+                      Số tiền còn lại khả dụng: <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>{formatCurrency(remainingAmount)}</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1274,41 +1442,60 @@ export const CreatePaymentPage: React.FC = () => {
               <h3 style={{ fontSize: '1.05rem', color: '#ffffff' }}>Thông Tin Người Thụ Hưởng</h3>
             </div>
 
-            {selectedProposal?.creator && (
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
               <button
                 type="button"
-                onClick={handleFillCreatorBeneficiary}
-                className="btn btn-secondary btn-sm"
+                onClick={handleFillProcurerBeneficiary}
+                className="btn btn-primary btn-sm"
                 style={{ fontSize: '0.75rem', gap: '0.4rem', padding: '0.35rem 0.75rem' }}
-                title="Lấy lại thông tin theo người tạo đơn đề xuất mua sắm"
+                title="Điền thông tin tài khoản ngân hàng của bên Thu mua thực hiện mua sắm"
               >
                 <UserIcon size={14} />
-                <span>Điền theo người tạo ({selectedProposal.creator.fullName})</span>
+                <span>
+                  Điền theo Thu Mua (
+                  {(typeof selectedProposal?.procurementExecution?.submittedBy === 'object' && selectedProposal?.procurementExecution?.submittedBy !== null
+                    ? (selectedProposal.procurementExecution.submittedBy as any).fullName
+                    : users.find((u) => u.role === 'thu_mua')?.fullName) || 'Bên Thu Mua'}
+                  )
+                </span>
               </button>
-            )}
+
+              {(selectedProposal as any)?.procurementExecution?.contractInfo?.partnerName && (
+                <button
+                  type="button"
+                  onClick={handleFillPartnerBeneficiary}
+                  className="btn btn-secondary btn-sm"
+                  style={{ fontSize: '0.75rem', gap: '0.4rem', padding: '0.35rem 0.75rem' }}
+                  title="Điền tên đối tác / nhà cung cấp theo hợp đồng kinh tế"
+                >
+                  <Building size={14} />
+                  <span>
+                    Điền theo Đối Tác HĐ ({(selectedProposal as any).procurementExecution.contractInfo.partnerName})
+                  </span>
+                </button>
+              )}
+            </div>
           </div>
 
-          {selectedProposal?.creator && (
-            <div
-              style={{
-                fontSize: '0.785rem',
-                color: 'var(--text-secondary)',
-                marginBottom: '1.25rem',
-                padding: '0.65rem 0.9rem',
-                backgroundColor: 'rgba(99, 102, 241, 0.08)',
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid rgba(99, 102, 241, 0.2)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-              }}
-            >
-              <Info size={16} color="var(--primary)" />
-              <span>
-                Đã tự động điền sẵn thông tin theo người tạo đơn đề xuất mua sắm: <strong>{selectedProposal.creator.fullName}</strong>. Bạn có thể chỉnh sửa nếu đơn vị thụ hưởng thực tế là Nhà cung cấp hoặc đối tác.
-              </span>
-            </div>
-          )}
+          <div
+            style={{
+              fontSize: '0.8rem',
+              color: '#bae6fd',
+              marginBottom: '1.25rem',
+              padding: '0.75rem 1rem',
+              backgroundColor: 'rgba(56, 189, 248, 0.08)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid rgba(56, 189, 248, 0.25)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.6rem',
+            }}
+          >
+            <Info size={17} color="var(--accent-cyan)" />
+            <span>
+              <strong>Quy định thanh toán:</strong> Khâu chi trả thanh toán sẽ chi trả về cho bên <strong>Thu Mua</strong> (người thực hiện mua sắm / hợp đồng), <strong>KHÔNG</strong> chi trả cho nhân viên đề xuất vật tư.
+            </span>
+          </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
             <div>
@@ -1466,14 +1653,26 @@ export const CreatePaymentPage: React.FC = () => {
                     <Paperclip size={14} color="var(--primary)" />
                     <span style={{ fontSize: '0.825rem', fontWeight: 500 }}>{file.name}</span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveAttachment(idx)}
-                    className="btn btn-ghost btn-sm"
-                    style={{ color: 'var(--danger)', padding: '0.25rem' }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <button
+                      type="button"
+                      onClick={() => handlePreviewFile(file, form.attachments, idx)}
+                      className="btn btn-ghost btn-sm"
+                      style={{ color: 'var(--accent-cyan)', padding: '0.25rem' }}
+                      title="Xem trước chứng từ"
+                    >
+                      <Eye size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveAttachment(idx)}
+                      className="btn btn-ghost btn-sm"
+                      style={{ color: 'var(--danger)', padding: '0.25rem' }}
+                      title="Xóa tệp"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1500,11 +1699,11 @@ export const CreatePaymentPage: React.FC = () => {
               <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                   <CheckCircle2 size={13} color="var(--warning)" />
-                  <span>Giám đốc / Chủ tịch <strong>phê duyệt chi</strong> (tùy theo mức tiền)</span>
+                  <span>Giám đốc / Chủ tịch <strong>xác nhận giải ngân</strong> (tùy theo mức tiền)</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                   <CheckCircle2 size={13} color="var(--accent-cyan)" />
-                  <span>Kế toán <strong>xác nhận giải ngân</strong> và chuyển tiền</span>
+                  <span>Kế toán <strong>duyệt chi</strong> và chuyển tiền</span>
                 </div>
               </div>
             </div>
@@ -1555,12 +1754,22 @@ export const CreatePaymentPage: React.FC = () => {
                 style={{ padding: '0.75rem 1.5rem' }}
               >
                 <Save size={16} />
-                <span>{submitting ? 'Đang gửi...' : 'Gửi Đề Xuất Thanh Toán'}</span>
+                <span>{submitting ? 'Đang gửi...' : 'Gửi Đề Xuất Lên Sếp Xác Nhận Giải Ngân'}</span>
               </button>
             </div>
           </div>
         </div>
       </form>
+
+      {/* MODAL XEM TRƯỚC VÀ KIỂM TRA CHỨNG TỪ (HÓA ĐƠN / HỢP ĐỒNG / BÁO GIÁ) */}
+      <FilePreviewModal
+        isOpen={!!previewAttachment}
+        onClose={() => setPreviewAttachment(null)}
+        file={previewAttachment}
+        files={previewFileList}
+        initialIndex={previewFileIndex}
+        title="Kiểm Tra Chứng Từ Hóa Đơn / Hợp Đồng"
+      />
     </div>
   );
 };

@@ -79,8 +79,11 @@ export interface ProcurementExecution {
     partnerName?: string;
     files?: any[];
   };
-  // [LUỒNG MỚI] advanceProposalId có thể được populate thành object chứa thông tin đơn tạm ứng liên kết
-  // [CŨ] advanceProposalId?: string | null;
+  // [QUY TRÌNH MỚI] Cờ xác nhận đã nhận tạm ứng kinh phí trước đó
+  isAdvanced?: boolean;
+  advanceAmount?: number;
+  advanceNote?: string;
+  // Liên kết đơn tạm ứng nếu có
   advanceProposalId?: string | {
     _id: string;
     proposalCode: string;
@@ -102,6 +105,8 @@ export type PurchaseProposalStatus =
   | 'procurement_execution'    // Thu mua thực hiện mua sắm (ứng trước/hóa đơn/hợp đồng)
   | 'pending_accounting'       // Chờ kế toán xử lý chứng từ và thanh toán/tất toán
   | 'rejected_by_tp'           // Trưởng phòng từ chối, trả về cho nhân viên chỉnh sửa
+  | 'rejected_by_director'     // Giám đốc/Chủ tịch từ chối báo giá, trả về thu mua khảo giá lại
+  | 'rejected_by_accounting'   // Kế toán từ chối chứng từ/hóa đơn, trả về thu mua sửa lại
   // [LUỒNG CŨ - giữ tương thích dữ liệu cũ]
   | 'pending_approval'
   | 'approved_initial'
@@ -149,6 +154,9 @@ export interface PurchaseProposal {
   approvalFlow: ApprovalStep[];
   disbursements: Disbursement[];
   totalDisbursed: number;
+  // [QUY TRÌNH MỚI] Lưu trữ các hóa đơn / hợp đồng đã được Giám đốc duyệt và Kế toán thanh toán hoàn tất
+  isInvoiceCompleted?: boolean;
+  invoiceCompletedAt?: string | null;
   rejectionReason?: string;
   createdAt: string;
   updatedAt: string;

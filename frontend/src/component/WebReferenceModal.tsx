@@ -361,18 +361,26 @@ export const WebReferenceModal: React.FC<WebReferenceModalProps> = ({
               onChange={handleFileInputChange}
             />
 
-            {/* 4. MỞ TAB MỚI */}
+            {/* 4. NÚT TRUY CẬP TRANG GỐC */}
             {url && (
               <a
                 href={url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn btn-secondary btn-sm"
-                style={{ gap: '0.35rem', fontSize: '0.8rem' }}
-                title="Mở liên kết gốc trong tab mới ngoài trình duyệt"
+                className="btn btn-primary btn-sm"
+                style={{
+                  gap: '0.35rem',
+                  fontSize: '0.8rem',
+                  backgroundColor: '#0284c7',
+                  border: '1px solid #38bdf8',
+                  color: '#ffffff',
+                  fontWeight: 600,
+                  boxShadow: '0 2px 8px rgba(2, 132, 199, 0.4)',
+                }}
+                title="Mở liên kết web gốc của nhà cung cấp trong tab mới ngoài trình duyệt để kiểm tra chi tiết giá"
               >
                 <ExternalLink size={14} />
-                <span>Mở Tab Mới</span>
+                <span>🔗 Truy Cập Trang</span>
               </a>
             )}
 
@@ -576,16 +584,16 @@ export const WebReferenceModal: React.FC<WebReferenceModalProps> = ({
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ fontSize: '1.1rem' }}>💡</span>
                 <span>
-                  Nếu trang Shopee/Tiki/Lazada chặn nhúng iframe (màn hình trắng), hãy bấm{' '}
+                  Nếu trang Shopee/Tiki/Lazada chặn nhúng iframe (màn hình trắng), hãy bấm nút{' '}
                   <a
                     href={url}
                     target="_blank"
                     rel="noreferrer"
-                    style={{ color: '#38bdf8', textDecoration: 'underline', fontWeight: 600 }}
+                    style={{ color: '#38bdf8', textDecoration: 'underline', fontWeight: 700 }}
                   >
-                    Mở Tab Mới
+                    🔗 Truy Cập Trang
                   </a>
-                  , sau đó dùng nút <strong>🖥️ Chụp Màn Hình Trang Này</strong> hoặc ấn <strong>Win+Shift+S</strong> rồi quay lại đây bấm <strong>Ctrl+V</strong>!
+                  {' '}để kiểm tra trực tiếp giá sản phẩm, sau đó dùng nút <strong>🖥️ Chụp Màn Hình Trang Này</strong> hoặc ấn <strong>Win+Shift+S</strong> rồi quay lại đây bấm <strong>Ctrl+V</strong>!
                 </span>
               </div>
 

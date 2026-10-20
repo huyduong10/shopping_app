@@ -58,6 +58,29 @@ export const advanceProposalService = {
     return res.data.data;
   },
 
+  resubmit: async (
+    id: string,
+    data: {
+      items?: Array<{ mucDich: string; soTien: number }>;
+      bankAccount?: { bankName: string; accountNumber: string; accountHolder?: string };
+      purchaseProposal?: string;
+    }
+  ): Promise<AdvanceProposal> => {
+    const res = await api.put<{ success: boolean; data: AdvanceProposal }>(
+      `/advance-proposals/${id}/resubmit`,
+      data
+    );
+    return res.data.data;
+  },
+
+  rejectSettlement: async (id: string, reason: string): Promise<AdvanceProposal> => {
+    const res = await api.put<{ success: boolean; data: AdvanceProposal }>(
+      `/advance-proposals/${id}/reject-settlement`,
+      { reason }
+    );
+    return res.data.data;
+  },
+
   confirmSettlement: async (
     id: string,
     comment?: string
