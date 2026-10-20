@@ -607,18 +607,13 @@ export const PurchaseDetailPage: React.FC = () => {
     );
     setResubmitReason(proposal.necessityReason || '');
     setResubmitAttachments(
-<<<<<<< HEAD
-      (proposal.necessityAttachments || []).map((a) => ({
-        ...a,
-        size: a.size ?? 0,
-        type: a.type ?? '',
-=======
+
       (proposal.necessityAttachments || []).map((att: any) => ({
         name: att.name || '',
         url: att.url || '',
         size: att.size || 0,
         type: att.type || '',
->>>>>>> upd
+
       }))
     );
     setIsResubmitOpen(true);
